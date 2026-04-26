@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NIT Mizoram Bus Tracker</title>
+
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: Inter, system-ui, sans-serif;
+      background: #f5f5f5;
+    }
+
+    /* Full-screen app shell */
+    #app {
+      height: 100vh;
+      width: 100vw;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Header stays fixed at top, known height */
+    #appHeader {
+      flex: 0 0 auto;
+      z-index: 50;
+      padding: 12px 16px;
+    }
+
+    /* Footer stays fixed at bottom, known height */
+    #appFooter {
+      flex: 0 0 auto;
+      z-index: 50;
+      padding: 8px 16px;
+    }
+
+    /* Main fills the remaining vertical space */
+    #appMain {
+      flex: 1 1 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* Dashboard fills main fully */
+    #dashboardShell {
+      height: 100%;
+      display: flex;
+      gap: 12px;
+      padding: 0 16px;
+    }
+
+    /* Sidebar */
+    #sidebar {
+      width: 300px;
+      flex: 0 0 300px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    /* Map panel */
+    #mapPanel {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    /* Leaflet map must fill its container absolutely */
+    #mapContainer {
+      flex: 1 1 0;
+      min-height: 0;
+      position: relative;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: #e8e8e8;
+    }
+
+    /* Info sidebar on right of map */
+    #infoPanel {
+      width: 260px;
+      flex: 0 0 260px;
+      overflow-y: auto;
+      padding: 12px;
+      background: #fff;
+      border-left: 1px solid #e5e7eb;
+    }
+
+    .glass-card {
+      background: rgba(255, 255, 255, 0.97);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07);
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    /* Bus marker */
+    .bus-marker-outer {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2.5px solid #111;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .bus-marker-icon {
+      width: 20px;
+      height: 20px;
+    }
+
+    /* Hostel dots */
+    .hostel-boys {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: #3b82f6;
+      border: 2px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+    .hostel-girls {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: #ec4899;
+      border: 2px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+
+    /* Scrollable sidebar content */
+    .panel-scroll {
+      overflow-y: auto;
+      flex: 1 1 0;
+      min-height: 0;
+    }
+    .panel-scroll::-webkit-scrollbar { width: 6px; }
+    .panel-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 999px; }
+
+    /* Metric grid cards */
+    .metric-card {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .metric-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #9ca3af;
+      margin-bottom: 2px;
+    }
+    .metric-value {
+      font-size: 15px;
+      font-weight: 600;
+      color: #111;
+    }
+
+    /* Input style */
+    .field {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field:focus { border-color: #111; box-shadow: 0 0 0 2px rgba(0,0,0,0.06); }
+
+    .btn-primary {
+      width: 100%;
+      border-radius: 10px;
+      background: #111;
+      color: #fff;
+      padding: 11px;
+      font-size: 14px;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #333; }
+
+    .btn-secondary {
+      width: 100%;
+      border-radius: 10px;
+      background: #f3f4f6;
+      color: #111;
+      padding: 11px;
+      font-size: 14px;
+      font-weight: 500;
+      border: 1px solid #d1d5db;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-secondary:hover { background: #e5e7eb; }
+
+    .btn-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #6b7280;
+      cursor: pointer;
+      border: none;
+      background: none;
+      padding: 4px 0;
+      margin-bottom: 8px;
+    }
+    .btn-back:hover { color: #111; }
+
+    /* Login overlay */
+    #loginOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.97);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 400px;
+      background: #fff;
+      border-radius: 20px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.10);
+      padding: 36px 32px;
+    }
+
+    /* Bus icon SVG in login */
+    .login-icon {
+      width: 48px; height: 48px;
+      margin: 0 auto 16px;
+      display: block;
+    }
+
+    /* Placeholder */
+    #placeholderPanel {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f9fafb;
+      border-radius: 14px;
+    }
+
+    /* Live view inner flex */
+    #liveViewInner {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: row;
+    }
+
+    /* Responsive: stack sidebar below map on small screens */
+    @media (max-width: 1024px) {
+      #dashboardShell { flex-direction: column; padding: 0 8px; gap: 8px; }
+      #sidebar { width: 100%; flex: 0 0 auto; max-height: 220px; }
+      #mapPanel { flex: 1 1 0; min-height: 0; }
+      #infoPanel { width: 100%; flex: 0 0 160px; border-left: none; border-top: 1px solid #e5e7eb; overflow-y: auto; }
+      #liveViewInner { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== HEADER ===== -->
+  <header id="appHeader">
+    <div class="glass-card rounded-2xl px-5 py-3 flex items-center justify-between">
+      <h1 style="font-size:18px; font-weight:700; letter-spacing:-0.01em;">NIT Mizoram Bus Tracker</h1>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span id="connectionBadge" style="display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; font-size:13px; color:#374151;">
+          <span id="connectionDot" class="status-dot" style="background:#9ca3af;"></span>
+          <span id="connectionText">Waiting for data</span>
+        </span>
+        <span id="roleBadge" style="display:none; padding:5px 12px; border-radius:999px; border:1px solid #e5e7eb; background:#111; color:#fff; font-size:13px; font-weight:500;"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <main id="appMain">
+
+    <!-- Dashboard (hidden until logged in) -->
+    <div id="dashboardShell" style="display:none;">
+
+      <!-- Left Sidebar -->
+      <aside id="sidebar" class="glass-card rounded-2xl" style="overflow:hidden; display:flex; flex-direction:column;">
+        <div style="padding:14px 16px; border-bottom:1px solid #e5e7eb; background:#fff; flex:0 0 auto;">
+          <h2 style="font-size:15px; font-weight:600;">Campus Fleet</h2>
+        </div>
+
+        <div class="panel-scroll" style="padding:12px; display:flex; flex-direction:column; gap:10px;">
+
+          <!-- Timings/Contact Banner -->
+          <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:12px; padding:12px 14px;">
+            <p id="studentTimingsBanner" style="font-size:13px; font-weight:500; color:#111; margin:0 0 4px;">Timings: Not updated</p>
+            <p id="studentContactBanner" style="font-size:13px; color:#6b7280; margin:0;">Driver: Not updated</p>
+          </div>
+
+          <!-- Bus list -->
+          <div id="busList"></div>
+
+          <!-- Admin-only controls -->
+          <div id="adminControlsContainer" style="display:none; border-top:1px solid #e5e7eb; padding-top:12px;">
+            <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:14px;">
+              <h3 style="font-size:14px; font-weight:600; margin:0 0 12px;">Update Bus Info</h3>
+              <div style="display:flex; flex-direction:column; gap:8px;">
+                <input id="timingsInput" type="text" placeholder="e.g. 8:00 AM, 5:15 PM" class="field" />
+                <input id="contactInput" type="text" placeholder="Driver Phone" class="field" />
+                <button id="saveAdminSettings" class="btn-primary">Save Updates</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </aside>
+
+      <!-- Right Map Panel -->
+      <section id="mapPanel" class="glass-card rounded-2xl" style="overflow:hidden; display:flex; flex-direction:column;">
+
+        <!-- Placeholder (shown before bus is selected) -->
+        <div id="placeholderPanel">
+          <div style="max-width:340px; text-align:center; padding:24px;">
+            <div style="width:52px; height:52px; margin:0 auto 16px; display:flex; align-items:center; justify-content:center; background:#f3f4f6; border-radius:50%; border:1.5px solid #d1d5db;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="1.8" style="width:26px; height:26px;">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                <circle cx="12" cy="9" r="2.5"/>
+              </svg>
+            </div>
+            <p style="font-size:17px; font-weight:600; margin:0 0 8px; color:#111;">Select a bus to begin</p>
+            <p style="font-size:14px; color:#6b7280; margin:0;">Click 'Track Live' on an active bus to open the GPS tracker.</p>
+          </div>
+        </div>
+
+        <!-- Live view (shown after bus is selected) -->
+        <div id="liveViewPanel" style="display:none; flex:1 1 0; min-height:0; flex-direction:column;">
+
+          <!-- Back button row -->
+          <div style="padding:8px 14px; border-bottom:1px solid #e5e7eb; background:#fff; flex:0 0 auto; display:flex; align-items:center; gap:12px;">
+            <button class="btn-back" id="backToFleetBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M15 18l-6-6 6-6"/></svg>
+              Fleet list
+            </button>
+            <span style="font-size:13px; font-weight:500; color:#111;">Bus 1 — Main Campus Route</span>
+          </div>
+
+          <div id="liveViewInner" style="flex:1 1 0; min-height:0;">
+
+            <!-- Map itself -->
+            <div id="mapContainer">
+              <div id="map"></div>
+            </div>
+
+            <!-- Info panel on right -->
+            <div id="infoPanel">
+
+              <!-- Student card -->
+              <div id="studentLiveCard" style="display:none;">
+                <div class="metric-card" style="margin-bottom:10px;">
+                  <div class="metric-label">Status</div>
+                  <div id="studentStatus" class="metric-value" style="font-size:18px;">Connecting...</div>
+                </div>
+                <div class="metric-card">
+                  <div class="metric-label">Speed</div>
+                  <div class="metric-value"><span id="studentSpeed">0.0</span> km/h</div>
+                </div>
+              </div>
+
+              <!-- Admin card -->
+              <div id="adminLiveCard" style="display:none;">
+                <p style="font-size:12px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em; margin:0 0 10px;">Live Diagnostics</p>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px;">
+                  <div class="metric-card">
+                    <div class="metric-label">Status</div>
+                    <div id="adminStatus" class="metric-value" style="font-size:13px;">--</div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">Speed</div>
+                    <div id="adminSpeed" class="metric-value" style="font-size:13px;">-- km/h</div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">Latitude</div>
+                    <div id="adminLatitude" class="metric-value" style="font-size:12px; font-family:monospace;">--</div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">Longitude</div>
+                    <div id="adminLongitude" class="metric-value" style="font-size:12px; font-family:monospace;">--</div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">Satellites</div>
+                    <div id="adminSatellites" class="metric-value" style="font-size:13px;">--</div>
+                  </div>
+                  <div class="metric-card">
+                    <div class="metric-label">HDOP</div>
+                    <div id="adminHdop" class="metric-value" style="font-size:13px;">--</div>
+                  </div>
+                </div>
+                <p style="font-size:11px; font-weight:600; color:#9ca3af; text-transform:uppercase; margin:0 0 6px;">Raw JSON Feed</p>
+                <pre id="rawJson" style="font-size:11px; background:#111; color:#4ade80; border-radius:10px; padding:10px; overflow-x:auto; white-space:pre-wrap; word-break:break-all; margin:0;">Waiting for data...</pre>
+              </div>
+
+            </div><!-- /infoPanel -->
+          </div><!-- /liveViewInner -->
+        </div><!-- /liveViewPanel -->
+
+      </section>
+
+    </div><!-- /dashboardShell -->
+
+  </main>
+
+  <!-- ===== FOOTER ===== -->
+  <footer id="appFooter">
+    <div class="glass-card rounded-xl px-4 py-2 text-center" style="font-size:12px; color:#6b7280;">
+      <strong style="color:#111;">Group 2 Batch 2024 Embedded System:</strong>
+      Dilip Sahu, Anshul Singh, Adarsh Thapa, Challa Shiva RAM, Mahak Singh
+    </div>
+  </footer>
+
+  <!-- ===== LOGIN OVERLAY ===== -->
+  <div id="loginOverlay">
+    <div class="login-card">
+      <div style="text-align:center; margin-bottom:24px;">
+        <!-- Bus icon (SVG, no emoji) -->
+        <svg class="login-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="6" y="12" width="36" height="22" rx="5" fill="#111"/>
+          <rect x="10" y="16" width="11" height="8" rx="2" fill="#fff"/>
+          <rect x="27" y="16" width="11" height="8" rx="2" fill="#fff"/>
+          <rect x="6" y="30" width="36" height="5" rx="2" fill="#333"/>
+          <circle cx="14" cy="38" r="4" fill="#444"/>
+          <circle cx="34" cy="38" r="4" fill="#444"/>
+          <circle cx="14" cy="38" r="2" fill="#aaa"/>
+          <circle cx="34" cy="38" r="2" fill="#aaa"/>
+          <rect x="22" y="13" width="4" height="21" rx="1" fill="#555"/>
+        </svg>
+        <h2 style="font-size:22px; font-weight:700; margin:0 0 4px;">NITMZ Bus Login</h2>
+        <p style="font-size:13px; color:#9ca3af; margin:0;">Track your campus fleet in real time</p>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <input id="emailInput" type="email" placeholder="caretaker@nitmz.ac.in" class="field" />
+        <input id="passwordInput" type="password" placeholder="Password" class="field" />
+        <button type="button" id="loginBtn" class="btn-primary">Login as Admin</button>
+        <div style="text-align:center; font-size:13px; color:#9ca3af; padding:4px 0;">— or —</div>
+        <button type="button" id="studentContinueBtn" class="btn-secondary">Continue as Student</button>
+      </div>
+
+      <p id="loginMessage" style="margin:12px 0 0; font-size:13px; text-align:center; color:#dc2626; min-height:18px;"></p>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const ADMIN_EMAILS = ['caretaker@nitmz.ac.in', 'warden@nitmz.ac.in'];
+const DEFAULT_COORDS = [23.7271, 92.7176];
+
+const HOSTELS = [
+  { name: "Boys Hostel 1",  coords: [23.7302, 92.7193], type: "boys" },
+  { name: "Boys Hostel 2",  coords: [23.7310, 92.7190], type: "boys" },
+  { name: "Boys Hostel 3",  coords: [23.7295, 92.7200], type: "boys" },
+  { name: "Boys Hostel 4",  coords: [23.7280, 92.7185], type: "boys" },
+  { name: "Girls Hostel 1", coords: [23.7242, 92.7148], type: "girls" },
+  { name: "Girls Hostel 2", coords: [23.7250, 92.7140], type: "girls" }
+];
+
+// ============================================================
+// STATE
+// ============================================================
+let currentRole   = null;   // 'admin' | 'student'
+let pollingTimer  = null;
+let map           = null;
+let busMarker     = null;
+let trackingActive = false;
+
+// ============================================================
+// LOCALSTORAGE HELPERS
+// ============================================================
+function saveSession(role) {
+  try { localStorage.setItem('nitmz_role', role); } catch(e) {}
+}
+function loadSession() {
+  try { return localStorage.getItem('nitmz_role'); } catch(e) { return null; }
+}
+function clearSession() {
+  try { localStorage.removeItem('nitmz_role'); } catch(e) {}
+}
+function saveAdminSettings(timings, contact) {
+  try {
+    localStorage.setItem('nitmz_timings', timings);
+    localStorage.setItem('nitmz_contact', contact);
+  } catch(e) {}
+}
+function loadAdminSettings() {
+  try {
+    return {
+      timings: localStorage.getItem('nitmz_timings') || '',
+      contact: localStorage.getItem('nitmz_contact') || ''
+    };
+  } catch(e) { return { timings: '', contact: '' }; }
+}
+
+// ============================================================
+// MAP
+// ============================================================
+function forceMapSize() {
+  if (!map) return;
+  // Call invalidateSize multiple times to guarantee tiles load
+  // regardless of how fast the browser resolves the layout
+  map.invalidateSize({ pan: false });
+  requestAnimationFrame(function() {
+    map.invalidateSize({ pan: false });
+    setTimeout(function() {
+      map.invalidateSize({ pan: false });
+    }, 300);
+  });
+}
+
+function initMap() {
+  if (map) return;
+
+  // The container must be visible and have a real size before L.map() is called.
+  // We guarantee this by calling initMap only after the flex layout has settled
+  // (see startTracking below which uses requestAnimationFrame).
+  map = L.map('map', { zoomControl: true }).setView(DEFAULT_COORDS, 15);
+
+  // Primary tile layer: OpenStreetMap
+  var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    crossOrigin: true
+  });
+
+  // Fallback tile layer: CartoDB Positron (lighter, often faster)
+  var cartoLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    subdomains: 'abcd',
+    crossOrigin: true
+  });
+
+  // Try OSM first; if tiles fail after 8 seconds, switch to CartoDB
+  osmLayer.addTo(map);
+  var tilesFailed = 0;
+  osmLayer.on('tileerror', function() {
+    tilesFailed++;
+    if (tilesFailed >= 3) {
+      tilesFailed = -9999; // prevent repeat switching
+      map.removeLayer(osmLayer);
+      cartoLayer.addTo(map);
+      console.warn('[MAP] OSM tiles failed, switched to CartoDB fallback.');
+    }
+  });
+
+  // Hostel markers
+  HOSTELS.forEach(function(h) {
+    var cls = h.type === 'boys' ? 'hostel-boys' : 'hostel-girls';
+    var icon = L.divIcon({
+      className: '',
+      html: '<div class="' + cls + '"></div>',
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    });
+    L.marker(h.coords, { icon: icon }).addTo(map)
+      .bindPopup('<strong>' + h.name + '</strong>');
+  });
+
+  // Bus marker (SVG bus icon, no emoji)
+  var busHtml = '<div class="bus-marker-outer">'
+    + '<svg class="bus-marker-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
+    + '<rect x="3" y="6" width="18" height="12" rx="3" fill="#111"/>'
+    + '<rect x="5" y="8" width="5" height="4" rx="1" fill="#fff"/>'
+    + '<rect x="14" y="8" width="5" height="4" rx="1" fill="#fff"/>'
+    + '<circle cx="7" cy="19" r="2" fill="#444"/>'
+    + '<circle cx="17" cy="19" r="2" fill="#444"/>'
+    + '<rect x="11" y="6" width="2" height="12" rx="1" fill="#555"/>'
+    + '</svg>'
+    + '</div>';
+
+  var busIcon = L.divIcon({
+    className: '',
+    html: busHtml,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20]
+  });
+
+  busMarker = L.marker(DEFAULT_COORDS, { icon: busIcon }).addTo(map)
+    .bindPopup('<strong>Bus 1</strong><br>Main Campus Route');
+}
+
+// ============================================================
+// POLLING / DATA FETCH
+// ============================================================
+function fetchLocation() {
+  fetch('/location')
+    .then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function(data) {
+      updateUI(data);
+    })
+    .catch(function(err) {
+      setConnectionStatus('error');
+      document.getElementById('studentStatus').textContent = 'Server offline';
+      document.getElementById('adminStatus').textContent   = 'Server offline';
+    });
+}
+
+function updateUI(data) {
+  // Determine status string
+  var status = data.has_fix
+    ? (data.speed_kmh > 2 ? 'Moving' : 'Parked')
+    : 'Searching GPS signal';
+
+  // Connection indicator
+  setConnectionStatus(data.has_fix ? 'live' : 'searching');
+
+  // Student panel
+  document.getElementById('studentStatus').textContent = status;
+  document.getElementById('studentSpeed').textContent  = parseFloat(data.speed_kmh).toFixed(1);
+
+  // Admin panel
+  document.getElementById('adminStatus').textContent    = status;
+  document.getElementById('adminSpeed').textContent     = parseFloat(data.speed_kmh).toFixed(1) + ' km/h';
+  document.getElementById('adminLatitude').textContent  = parseFloat(data.latitude).toFixed(6);
+  document.getElementById('adminLongitude').textContent = parseFloat(data.longitude).toFixed(6);
+  document.getElementById('adminSatellites').textContent= data.satellites !== undefined ? data.satellites : '--';
+  document.getElementById('adminHdop').textContent      = data.hdop !== undefined ? parseFloat(data.hdop).toFixed(1) : '--';
+  document.getElementById('rawJson').textContent        = JSON.stringify(data, null, 2);
+
+  // Move bus marker
+  if (busMarker && data.latitude && data.longitude) {
+    var latlng = [parseFloat(data.latitude), parseFloat(data.longitude)];
+    busMarker.setLatLng(latlng);
+    map.panTo(latlng);
+  }
+}
+
+function setConnectionStatus(state) {
+  var dot  = document.getElementById('connectionDot');
+  var text = document.getElementById('connectionText');
+  if (state === 'live') {
+    dot.style.background  = '#22c55e';
+    text.textContent = 'Live tracker active';
+  } else if (state === 'searching') {
+    dot.style.background  = '#f59e0b';
+    text.textContent = 'Waiting for GPS lock';
+  } else {
+    dot.style.background  = '#ef4444';
+    text.textContent = 'Server disconnected';
+  }
+}
+
+function startPolling() {
+  if (pollingTimer) return;
+  fetchLocation();
+  pollingTimer = setInterval(fetchLocation, 1000);
+}
+
+function stopPolling() {
+  if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null; }
+  document.getElementById('connectionDot').style.background = '#9ca3af';
+  document.getElementById('connectionText').textContent = 'Tracker paused';
+}
+
+// ============================================================
+// TRACKING VIEW
+// ============================================================
+function startTracking() {
+  trackingActive = true;
+
+  document.getElementById('placeholderPanel').style.display = 'none';
+  var lv = document.getElementById('liveViewPanel');
+  lv.style.display = 'flex';
+
+  // Wait two animation frames so the browser has time to:
+  // 1. Apply display:flex to liveViewPanel
+  // 2. Calculate the resulting flex heights
+  // 3. Give #mapContainer a real pixel size
+  // ONLY THEN initialise Leaflet (so it reads a real size, not zero).
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      initMap();
+      forceMapSize();
+      startPolling();
+    });
+  });
+}
+
+function stopTracking() {
+  trackingActive = false;
+
+  stopPolling();
+
+  document.getElementById('liveViewPanel').style.display  = 'none';
+  document.getElementById('placeholderPanel').style.display = 'flex';
+
+  document.getElementById('connectionDot').style.background = '#9ca3af';
+  document.getElementById('connectionText').textContent = 'Waiting for data';
+}
+
+// ============================================================
+// BUS LIST
+// ============================================================
+function loadBusList() {
+  document.getElementById('busList').innerHTML = ''
+    + '<div style="border:1px solid #e5e7eb; border-radius:12px; padding:14px; background:#fff;">'
+    + '  <p style="font-size:15px; font-weight:600; margin:0 0 2px;">Bus 1 — Active</p>'
+    + '  <p style="font-size:13px; color:#6b7280; margin:0 0 12px;">Main Campus Route — IoT Installed</p>'
+    + '  <button onclick="startTracking()" class="btn-primary" style="font-size:13px; padding:9px;">Track Live</button>'
+    + '</div>';
+}
+
+// ============================================================
+// AUTH
+// ============================================================
+function loginAsAdmin() {
+  var email = document.getElementById('emailInput').value.trim().toLowerCase();
+  if (!ADMIN_EMAILS.includes(email)) {
+    document.getElementById('loginMessage').textContent =
+      'Access denied. Use caretaker@nitmz.ac.in or warden@nitmz.ac.in';
+    return;
+  }
+  document.getElementById('loginMessage').textContent = '';
+  currentRole = 'admin';
+  saveSession('admin');
+  applyRole('admin');
+}
+
+function loginAsStudent() {
+  currentRole = 'student';
+  saveSession('student');
+  applyRole('student');
+}
+
+function applyRole(role) {
+  // Hide login overlay
+  document.getElementById('loginOverlay').style.display = 'none';
+
+  // Show dashboard
+  document.getElementById('dashboardShell').style.display = 'flex';
+
+  // Role badge
+  var badge = document.getElementById('roleBadge');
+  badge.textContent = role === 'admin' ? 'Admin' : 'Student';
+  badge.style.display = 'inline-block';
+
+  // Show/hide role-specific panels
+  if (role === 'admin') {
+    document.getElementById('adminControlsContainer').style.display = 'block';
+    document.getElementById('adminLiveCard').style.display   = 'block';
+    document.getElementById('studentLiveCard').style.display = 'none';
+
+    // Restore saved admin settings
+    var saved = loadAdminSettings();
+    if (saved.timings) {
+      document.getElementById('studentTimingsBanner').textContent = 'Timings: ' + saved.timings;
+      document.getElementById('timingsInput').value = saved.timings;
+    }
+    if (saved.contact) {
+      document.getElementById('studentContactBanner').textContent = 'Driver: ' + saved.contact;
+      document.getElementById('contactInput').value = saved.contact;
+    }
+  } else {
+    document.getElementById('adminControlsContainer').style.display = 'none';
+    document.getElementById('adminLiveCard').style.display   = 'none';
+    document.getElementById('studentLiveCard').style.display = 'block';
+  }
+
+  loadBusList();
+}
+
+// ============================================================
+// ADMIN SETTINGS SAVE
+// ============================================================
+document.getElementById('saveAdminSettings').addEventListener('click', function() {
+  var timings = document.getElementById('timingsInput').value.trim();
+  var contact = document.getElementById('contactInput').value.trim();
+
+  if (timings) document.getElementById('studentTimingsBanner').textContent = 'Timings: ' + timings;
+  if (contact) document.getElementById('studentContactBanner').textContent = 'Driver: ' + contact;
+
+  saveAdminSettings(timings, contact);
+
+  var btn = document.getElementById('saveAdminSettings');
+  btn.textContent = 'Saved!';
+  btn.style.background = '#16a34a';
+  setTimeout(function() {
+    btn.textContent = 'Save Updates';
+    btn.style.background = '#111';
+  }, 2000);
+});
+
+// ============================================================
+// EVENTS
+// ============================================================
+document.getElementById('loginBtn').addEventListener('click', loginAsAdmin);
+
+// Allow pressing Enter to log in
+document.getElementById('emailInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') loginAsAdmin();
+});
+document.getElementById('passwordInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') loginAsAdmin();
+});
+
+document.getElementById('studentContinueBtn').addEventListener('click', loginAsStudent);
+
+document.getElementById('backToFleetBtn').addEventListener('click', stopTracking);
+
+// Stop polling when user navigates away / minimises tab
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    stopPolling();
+  } else if (trackingActive) {
+    startPolling();
+  }
+});
+
+// ============================================================
+// BOOT — restore session from localStorage
+// ============================================================
+(function boot() {
+  // Watch the map container for size changes (window resize, sidebar collapse, etc.)
+  // and tell Leaflet to redraw tiles accordingly.
+  if (typeof ResizeObserver !== 'undefined') {
+    var ro = new ResizeObserver(function() {
+      if (map) map.invalidateSize({ pan: false });
+    });
+    ro.observe(document.getElementById('mapContainer'));
+  }
+
+  var savedRole = loadSession();
+  if (savedRole === 'admin' || savedRole === 'student') {
+    currentRole = savedRole;
+    applyRole(savedRole);
+  }
+  // else: login overlay stays visible (default)
+})();
+</script>
+</body>
+</html>
