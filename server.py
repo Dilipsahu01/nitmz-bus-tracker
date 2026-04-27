@@ -84,8 +84,7 @@ def forward_data_to_friend():
                 "speed": latest_bus_data['speed_kmh'],
                 "accuracy": latest_bus_data['hdop'],
                 "timestamp": current_time,
-                "status": bus_status,
-                "net_type": latest_bus_data['net_type']
+                "status": bus_status
             }
         }
 
