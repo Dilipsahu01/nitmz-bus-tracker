@@ -35,7 +35,7 @@ def index():
 def receive_gps_data():
     global latest_bus_data
     
-    # --- SECURITY CHECK (For your server) ---
+    # --- SECURITY CHECK (For render server) ---
     client_key = request.headers.get('x-api-key')
     if client_key != API_SECRET_KEY:
         logger.warning("Unauthorized POST attempt blocked!")
@@ -97,7 +97,7 @@ def forward_data_to_friend():
 
         # Send the POST request. 
         # We use a short timeout (2 seconds) so if his server goes offline, 
-        # it doesn't crash or slow down your main Render server.
+        # it doesn't crash or slow down main Render server.
         requests.post(FRIEND_WEBHOOK_URL, json=payload, headers=headers, timeout=2)
         logger.info("Successfully forwarded data to friend's ngrok.")
 
