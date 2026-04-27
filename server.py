@@ -18,12 +18,13 @@ FRIEND_API_KEY = "BUSTRACKESP1SECRETKEY"
 FRIEND_WEBHOOK_URL = "https://matador-unneeded-synergy.ngrok-free.dev/api/update-location"
 
 latest_bus_data = {
-    "latitude": 23.7271, 
-    "longitude": 92.7176,
+    "latitude": 00.0000, 
+    "longitude": 00.0000,
     "speed_kmh": 0.0,
     "satellites": 0,
     "hdop": 1.0,
-    "has_fix": False
+    "has_fix": False,
+    "net_type": "notknown"
 }
 
 @app.route('/', methods=['GET'])
@@ -52,6 +53,7 @@ def receive_gps_data():
         latest_bus_data['satellites'] = data.get('satellites', 0)
         latest_bus_data['hdop'] = data.get('hdop', 1.0)
         latest_bus_data['has_fix'] = data.get('has_fix', False)
+        latest_bus_data['net_type'] = data.get('has_fix',latest_bus_data['net_type'])
 
         # --- FORWARD DATA TO FRIEND'S NGROK ---
         forward_data_to_friend()
@@ -82,7 +84,8 @@ def forward_data_to_friend():
                 "speed": latest_bus_data['speed_kmh'],
                 "accuracy": latest_bus_data['hdop'],
                 "timestamp": current_time,
-                "status": bus_status
+                "status": bus_status,
+                "net_type": latest_bus_data['net_type']
             }
         }
 
