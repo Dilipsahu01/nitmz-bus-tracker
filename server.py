@@ -52,7 +52,7 @@ def receive_gps_data():
         latest_bus_data['speed_kmh'] = data.get('speed_kmh', 0.0)
         latest_bus_data['satellites'] = data.get('satellites', 0)
         latest_bus_data['hdop'] = data.get('hdop', 1.0)
-        latest_bus_data['has_fix'] = data.get('has_fix', False)
+        latest_bus_data['has_fix'] = data.get('has_fix', lastest_bus_data['has_fix'])
         latest_bus_data['net_type'] = data.get('has_fix',latest_bus_data['net_type'])
 
         # --- FORWARD DATA TO FRIEND'S NGROK ---
