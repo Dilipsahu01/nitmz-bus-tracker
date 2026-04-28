@@ -201,11 +201,27 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .bus-icon{width:42px;height:42px;position:relative;z-index:1;transition:transform .6s cubic-bezier(.22,1,.36,1);}
 
 /* User marker */
-.user-dot{width:14px;height:14px;background:var(--white);border-radius:50%;border:2px solid #0a0a0a;box-shadow:0 0 0 3px var(--white-glow),0 2px 8px rgba(0,0,0,.5);}
-
+.user-dot {
+  width: 14px;
+  height: 14px;
+  background: #fff; /* Keep the center white so it pops */
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  /* The first shadow is the sharp blue ring, the second is the soft outer glow */
+  box-shadow: 0 0 0 3px var(--accent), 0 0 15px var(--accent-glow), 0 2px 8px rgba(0,0,0,0.5);
+}
 /* ===== ROUTE LINE ===== */
-.route-line{stroke-dasharray:10 5;animation:dashFlow 1s linear infinite;}
-@keyframes dashFlow{from{stroke-dashoffset:15}to{stroke-dashoffset:0}}
+.route-line {
+  stroke-dasharray: 10 5;
+  animation: dashFlow 1s linear infinite;
+  /* This creates the neon light effect */
+  filter: drop-shadow(0 0 8px var(--accent)); 
+}
+
+@keyframes dashFlow {
+  from { stroke-dashoffset: 15; }
+  to { stroke-dashoffset: 0; }
+}
 
 /* ===== TOAST ===== */
 #toastBox{position:fixed;top:62px;right:14px;z-index:9000;display:flex;flex-direction:column;gap:7px;pointer-events:none;}
