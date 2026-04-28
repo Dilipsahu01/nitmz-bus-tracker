@@ -22,9 +22,9 @@ latest_bus_data = {
     "longitude": 00.0000,
     "speed_kmh": 0.0,
     "satellites": 0,
-    "hdop": 1.0,
+    "hdop": 100.0,
     "has_fix": False,
-    "net_type": "notknown"
+    "net_type": "unknown"
 }
 
 @app.route('/', methods=['GET'])
@@ -53,7 +53,6 @@ def receive_gps_data():
         latest_bus_data['satellites'] = data.get('satellites', 0)
         latest_bus_data['hdop'] = data.get('hdop', 1.0)
         latest_bus_data['has_fix'] = data.get('has_fix', latest_bus_data['has_fix'])
-        latest_bus_data['net_type'] = data.get('net_type', latest_bus_data['net_type'])
         latest_bus_data['net_type'] = data.get('net_type', latest_bus_data['net_type'])
         # --- FORWARD DATA TO FRIEND'S NGROK ---
         forward_data_to_friend()
