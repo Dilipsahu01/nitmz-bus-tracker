@@ -601,6 +601,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <!-- Toast container -->
 <div id="toastBox"></div>
 
+<script src="/static/public/js/api.js"></script>
+<script src="/static/public/js/auth.js"></script>
 <script>
 'use strict';
 
@@ -877,7 +879,8 @@ function logout() {
 /* ================================================================
    MAP
 ================================================================ */
-let map, busMarker, userMarker, userAccCircle, routePolyline;
+let map, busMarkers = new Map(), userMarker, userAccCircle, routePolyline;
+S.selectedBusId = null;
 
 const TILE_LAYERS = {
   dark:      () => L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom:19, attribution:'© OpenStreetMap © CARTO', subdomains:'abcd' }),
@@ -906,8 +909,7 @@ function initMap() {
       .on('click', () => selectHostel(h.id));
   });
 
-  busMarker = L.marker(DEFAULT_CENTER, { icon: buildBusIcon(0), zIndexOffset: 1000 }).addTo(map);
-  busMarker.bindPopup('<strong>Bus 1</strong><br>Main Campus Route');
+
 
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => { if(map) map.invalidateSize({pan:false}); })
@@ -933,26 +935,32 @@ function buildBusIcon(deg) {
   });
 }
 
-function rotateBusMarker(deg) {
-  const el = busMarker && busMarker.getElement();
+function rotateBusMarker(busId, deg) {
+  const marker = busMarkers.get(busId);
+  const el = marker && marker.getElement();
   if (!el) return;
-  const svg = el.querySelector('#busIconSvg');
+  const svg = el.querySelector("#busIconSvg");
   if (svg) svg.style.transform = `rotate(${deg}deg)`;
+  if (busId === S.selectedBusId) S.bearing = deg;
+}deg)`;
   S.bearing = deg;
 }
 
-function setPulse(moving) {
-  const el = busMarker && busMarker.getElement();
+function setPulse(busId, moving) {
+  const marker = busMarkers.get(busId);
+  const el = marker && marker.getElement();
   if (!el) return;
-  const p = el.querySelector('.bus-pulse');
-  if (p) { if(moving) p.classList.add('on'); else p.classList.remove('on'); }
+  const p = el.querySelector(".bus-pulse");
+  if (p) { if(moving) p.classList.add("on"); else p.classList.remove("on"); }
+}
 }
 
 /* ================================================================
    SMOOTH ANIMATION ENGINE
 ================================================================ */
 function animateBusTo(lat, lng) {
-  if (!busMarker) return;
+  const marker = busMarkers.get(S.selectedBusId);
+  if (!marker) return;
   const cur = busMarker.getLatLng();
   const dist = haversine(cur.lat, cur.lng, lat, lng);
   if (dist > 2) rotateBusMarker(bearing(cur.lat, cur.lng, lat, lng));
@@ -1064,15 +1072,16 @@ function onUserPosErr() {
 }
 
 function updateUserDistDisplay() {
-  if (!S.userLoc || !busMarker) return;
-  const busPos = busMarker.getLatLng();
+  const marker = busMarkers.get(S.selectedBusId);
+  if (!S.userLoc || !marker) return;
+  const busPos = marker.getLatLng();
   const d = haversine(S.userLoc.lat, S.userLoc.lng, busPos.lat, busPos.lng);
   document.getElementById('userDistDisplay').textContent = fmtDist(d) + ' away';
 }
 
 function checkProximity() {
   if (!S.userLoc || !busMarker || !S.tracking) return;
-  const busPos = busMarker.getLatLng();
+  const busPos = marker.getLatLng();
   const d = haversine(S.userLoc.lat, S.userLoc.lng, busPos.lat, busPos.lng);
   if (d < PROXIMITY_ALERT_M && !S.proximityNotified) {
     S.proximityNotified = true;
@@ -1101,8 +1110,9 @@ function checkGeofence(lat, lng) {
    OSRM ROUTING (with fallback to straight line)
 ================================================================ */
 async function fetchAllRoutes() {
-  if (!busMarker) return;
-  const pos = busMarker.getLatLng();
+  const marker = busMarkers.get(S.selectedBusId);
+  if (!marker) return;
+  const pos = marker.getLatLng();
   if (pos.lat === DEFAULT_CENTER[0] && pos.lng === DEFAULT_CENTER[1] && !S.lastData?.has_fix) return;
   S.lastRouteOrigin = { lat: pos.lat, lng: pos.lng };
   for (const h of HOSTELS) {
@@ -1591,9 +1601,22 @@ function stopPolling() {
 }
 
 function fetchBus() {
-  fetch('/location')
-    .then(r => { if(!r.ok) throw new Error(); return r.json(); })
-    .then(onBusData)
+  apiFetch('/buses/live')
+    .then(json => {
+      const buses = json.data || [];
+      buses.forEach(b => {
+        const mapped = {
+          latitude: b.lat, longitude: b.lng, speed_kmh: b.speed,
+          has_fix: b.hasFix, satellites: b.satellites, hdop: b.hdop, net_type: b.netType
+        };
+        onBusData(b.busNumber, mapped, b.status);
+      });
+      if (!S.selectedBusId && buses.length > 0) {
+        // auto-select first bus just so the UI isn't empty
+        S.selectedBusId = buses[0].busNumber;
+        document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${buses[0].status})</span>`;
+      }
+    })
     .catch(() => {
       setConn('offline');
       updateStatusBig(false, false);
@@ -1616,8 +1639,34 @@ document.addEventListener('visibilitychange', () => {
    BOOT — no localStorage auto-login (prevents role escalation)
 ================================================================ */
 (function boot() {
-  // Intentionally no auto-login from localStorage
-  // Users must always authenticate fresh
+  Auth.requireAuth();
+  const user = Auth.getUser();
+  if (!user) return; // will redirect anyway
+
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  
+  const btn = document.getElementById('logoutBtn');
+  btn.style.display = 'block';
+  btn.textContent = 'Logout';
+  btn.style.background = '';
+  btn.style.color = '';
+  btn.onclick = () => Auth.logout();
+  
+  if (user.role === 'admin' || user.role === 'caretaker') {
+    document.getElementById('roleTag').style.display = 'inline-flex';
+    document.getElementById('roleTag').textContent = user.role.toUpperCase();
+    document.getElementById('adminSettings').style.display = 'block';
+    document.getElementById('adminDiag').style.display = 'block';
+  } else {
+    document.getElementById('roleTag').style.display = 'none';
+    document.getElementById('adminSettings').style.display = 'none';
+    document.getElementById('adminDiag').style.display = 'none';
+  }
+  
+  initMap();
+  fetchBus();
+  S.pollTimer = setInterval(fetchBus, POLL_MS);
 })();
 </script>
 </body>

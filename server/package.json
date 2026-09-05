@@ -1,0 +1,20 @@
+{
+  "name": "nitmz-bus-tracker-server",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "seed": "node src/seed.js",
+    "test:esp32": "python3 scripts/esp32_simulator.py"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "dotenv": "^17.4.2",
+    "pg": "^8.13.1",
+    "bcryptjs": "^3.0.2",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5"
+  }
+}

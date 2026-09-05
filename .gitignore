@@ -1,3 +1,14 @@
 venv/
 __pycache__/
 .venv/
+
+# Node.js
+node_modules/
+server/node_modules/
+
+# Environment secrets
+.env
+server/.env
+
+# Logs
+*.log

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Login — NITMZ Bus Tracker</title>
+  <link rel="stylesheet" href="/static/public/css/styles.css">
+</head>
+<body>
+  <div id="toastBox"></div>
+
+  <div id="loginScreen" style="display: flex;">
+    <div class="login-wrap">
+      <div class="login-header">
+        <div class="login-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24"><path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-1.5-6H9V9h6v2z" fill="#0a0a0a"/></svg>
+        </div>
+        <div class="login-title">Campus Tracker</div>
+        <div class="login-sub">NIT Mizoram Bus Tracking System</div>
+      </div>
+      
+      <div class="login-card">
+        <!-- Tabs -->
+        <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+          <button id="tabLogin" class="lbtn2" style="background:var(--white);color:#0a0a0a;flex:1;">Login</button>
+          <button id="tabRegister" class="lbtn2" style="background:var(--surface2);color:var(--text);flex:1;">Register</button>
+        </div>
+
+        <div id="loginErr" style="color: var(--red); font-size: 12px; margin-bottom: 12px; text-align: center;"></div>
+        
+        <!-- Login Form -->
+        <form id="loginForm">
+          <div class="fl">
+            <label class="label">Email address</label>
+            <input type="email" id="lEmail" class="lf" placeholder="student@nitmz.ac.in" required>
+          </div>
+          <div class="fl">
+            <label class="label">Password</label>
+            <input type="password" id="lPass" class="lf" placeholder="••••••••" required>
+          </div>
+          <button type="submit" class="lbtn2" style="background:var(--white);color:#0a0a0a;margin-top:10px;">
+            Sign In
+          </button>
+        </form>
+
+        <!-- Register Form -->
+        <form id="registerForm" style="display: none;">
+          <div class="fl">
+            <label class="label">Full Name</label>
+            <input type="text" id="rName" class="lf" placeholder="Your Name" required>
+          </div>
+          <div class="fl">
+            <label class="label">NITMZ Email</label>
+            <input type="email" id="rEmail" class="lf" placeholder="student@nitmz.ac.in" required>
+          </div>
+          <div class="fl">
+            <label class="label">Password</label>
+            <input type="password" id="rPass" class="lf" placeholder="••••••••" minlength="6" required>
+          </div>
+          <button type="submit" class="lbtn2" style="background:var(--green);color:#0a0a0a;margin-top:10px;">
+            Create Account
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/public/js/api.js"></script>
+  <script src="/static/public/js/auth.js"></script>
+  <script>
+    Auth.requireNoAuth();
+
+    const tLogin = document.getElementById('tabLogin');
+    const tReg = document.getElementById('tabRegister');
+    const fLogin = document.getElementById('loginForm');
+    const fReg = document.getElementById('registerForm');
+    const errEl = document.getElementById('loginErr');
+
+    tLogin.onclick = () => {
+      tLogin.style.background = 'var(--white)'; tLogin.style.color = '#0a0a0a';
+      tReg.style.background = 'var(--surface2)'; tReg.style.color = 'var(--text)';
+      fLogin.style.display = 'block'; fReg.style.display = 'none';
+      errEl.textContent = '';
+    };
+
+    tReg.onclick = () => {
+      tReg.style.background = 'var(--white)'; tReg.style.color = '#0a0a0a';
+      tLogin.style.background = 'var(--surface2)'; tLogin.style.color = 'var(--text)';
+      fReg.style.display = 'block'; fLogin.style.display = 'none';
+      errEl.textContent = '';
+    };
+
+    fLogin.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errEl.textContent = '';
+      try {
+        await Auth.login(document.getElementById('lEmail').value, document.getElementById('lPass').value);
+        window.location.href = '/';
+      } catch (err) {
+        errEl.textContent = err.message || 'Invalid credentials';
+      }
+    });
+
+    fReg.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errEl.textContent = '';
+      try {
+        await Auth.register(
+          document.getElementById('rName').value,
+          document.getElementById('rEmail').value,
+          document.getElementById('rPass').value
+        );
+        window.location.href = '/';
+      } catch (err) {
+        errEl.textContent = err.message || 'Registration failed';
+      }
+    });
+  </script>
+</body>
+</html>
