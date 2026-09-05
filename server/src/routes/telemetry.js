@@ -457,10 +457,35 @@ router.get('/api/telemetry/history', requireAuth(['caretaker', 'admin']), async 
       ORDER BY ts ASC NULLS LAST, received_at ASC
     `, [`%${bus_id}%`, start, end]);
     
-    res.json({ status: 'success', data: rows });
+// ─── POST /api/telemetry/reset-sos ─────────────────────────────
+// Reset Emergency SOS state for all buses
+router.post('/api/telemetry/reset-sos', async (req, res) => {
+  try {
+    // 1. Clear SOS notifications from database
+    await query(`DELETE FROM notifications WHERE type = 'alert' OR title LIKE '%SOS%'`);
+    
+    // 2. Clear is_sos flag in Redis hot cache and broadcast live update
+    if (redisClient && redisClient.isOpen) {
+      try {
+        const allData = await redisClient.hGetAll('hotCache');
+        for (const [busNumber, valStr] of Object.entries(allData)) {
+          try {
+            const entry = JSON.parse(valStr);
+            entry.is_sos = false;
+            await redisClient.hSet('hotCache', String(busNumber), JSON.stringify(entry));
+            await redisClient.publish('live_update', JSON.stringify(entry));
+            telemetryEmitter.emit('live_update', entry);
+          } catch (e) {}
+        }
+      } catch (redisErr) {
+        console.error('[telemetry] Reset SOS Redis error:', redisErr.message);
+      }
+    }
+
+    res.json({ status: 'success', message: 'All emergency SOS alerts cleared and turned OFF' });
   } catch (err) {
-    console.error('[telemetry] GET /api/telemetry/history error:', err.message);
-    res.status(500).json({ status: 'error', message: 'Server error' });
+    console.error('[telemetry] POST /api/telemetry/reset-sos error:', err.message);
+    res.status(500).json({ status: 'error', message: 'Failed to reset SOS alerts' });
   }
 });
 

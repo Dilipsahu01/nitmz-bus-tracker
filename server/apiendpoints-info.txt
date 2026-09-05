@@ -1,0 +1,158 @@
+1. Authentication & User Profile
+POST /api/auth/login
+Purpose: Authenticates user credentials, returns a 7-day JWT session token, and user metadata (role, hostelId).
+
+Auth: Public
+
+Input (JSON): {"email": "student@nitmz.ac.in", "password": "student123"}
+
+POST /api/auth/register
+Purpose: Registers a new student account (domain restricted to @nitmz.ac.in).
+
+Auth: Public
+
+Input (JSON): {"name": "Name", "email": "user@nitmz.ac.in", "password": "Password123!", "hostelId": "BH1"}
+
+GET /api/me
+Purpose: Retrieves the currently authenticated user's profile details.
+
+Auth: Bearer Token (Student, Caretaker, or Admin)
+
+Input: None
+
+2. Bus Data & Location Routes
+GET /api/buses/live
+Purpose: Loads initial live map telemetry, computes ETAs to campus center, and enforces RBAC hostel filtering.
+
+Auth: Bearer Token
+
+Input: None
+
+GET /api/buses
+Purpose: Retrieves all active bus metadata, driver records, and status.
+
+Auth: Bearer Token
+
+Input (Query): ?hostel=BH1 (optional for admins/caretakers)
+
+GET /api/buses/:busNumber
+Purpose: Returns detailed information for a single bus.
+
+Auth: Bearer Token (Hostel-scoped for students)
+
+Input (Path): :busNumber (e.g., 5)
+
+POST /api/buses
+Purpose: Registers a new bus and driver entry in the system.
+
+Auth: Bearer Token (Caretaker or Admin)
+
+Input (JSON): {"busNumber": 99, "assignedHostel": "BH1", "driverName": "Name", "driverPhone": "+91...", "latitude": 23.73, "longitude": 92.71}
+
+PATCH /api/buses/:busNumber
+Purpose: Manually updates a bus's operational status (running, stopped) or enabled toggle.
+
+Auth: Bearer Token (Caretaker or Admin)
+
+Input (JSON): {"status": "running", "isEnabled": true}
+
+PATCH /api/buses/:busNumber/driver
+Purpose: Updates driver details assigned to a specific bus.
+
+Auth: Bearer Token (Caretaker or Admin)
+
+Input (JSON): {"name": "Driver Name", "phone": "+91...", "isActive": true}
+
+3. Telemetry & Hardware Ingestion
+POST /api/update-location
+Purpose: Primary ESP32 hardware endpoint. Ingests GPS telemetry, writes to Redis hot cache/queue, broadcasts via SSE, and triggers geofence/SOS rules.
+
+Auth: Hardware API Key header (x-api-key: BUSTRACKESP1SECRETKEY)
+
+Input (JSON): {"bus_id": "5", "latitude": 23.73, "longitude": 92.71, "speed_kmh": 20.0, "satellites": 12, "hdop": 0.8, "has_fix": true, "status": "active", "net_type": "GSM", "timestamp": "..."}
+
+POST /endpoint
+Purpose: Backward-compatibility ingestion route for legacy ESP32 firmware versions.
+
+Auth: Hardware API Key (x-api-key: BUSTRACKESP1SECRETKEY)
+
+Input (JSON): {"bus_id": "5", "lat": 23.73, "lng": 92.71, "speed": 20.0}
+
+GET /api/buses/stream
+Purpose: Establishes a persistent Server-Sent Events (SSE) connection for real-time map updates backed by Redis Pub/Sub.
+
+Auth: Bearer Token or Query Param (?token=<JWT>)
+
+Input: None
+
+GET /api/location/latest
+Purpose: Public fallback endpoint returning the single latest raw telemetry entry from PostgreSQL.
+
+Auth: Public
+
+Input: None
+
+GET /api/telemetry/diagnostics
+Purpose: Returns hardware diagnostic statistics (fix rates, average satellites, HDOP, network types).
+
+Auth: Bearer Token (Caretaker or Admin)
+
+Input (Query): ?bus_id=5&limit=50
+
+GET /api/telemetry/history
+Purpose: Fetches time-series coordinate history for route playback and trip auditing.
+
+Auth: Bearer Token (Caretaker or Admin)
+
+Input (Query): ?bus_id=5
+
+4. Schedules & Notifications
+GET /api/schedules
+Purpose: Retrieves operational bus schedules (hostel-filtered for students).
+
+Auth: Bearer Token
+
+Input (Query): ?hostel=BH1 (optional)
+
+POST /api/schedules
+Purpose: Creates or updates a bus schedule for a specific date.
+
+Auth: Bearer Token (Caretaker or Admin)
+
+Input (JSON): {"busNumber": 5, "date": "2026-09-05", "fromHostelTime": "08:30", "fromMBSETime": "17:00", "specialNote": "Regular trip"}
+
+GET /api/notifications
+Purpose: Retrieves campus-wide or hostel-targeted announcements and delay alerts.
+
+Auth: Bearer Token
+
+Input (Query): ?hostel=BH1 (optional)
+
+POST /api/notifications/send
+Purpose: Broadcasts delay warnings or emergency alerts to students.
+
+Auth: Bearer Token (Caretaker or Admin)
+
+Input (JSON): {"title": "Notice", "message": "Bus delayed", "type": "warning", "busNumber": 5, "targetHostel": "BH1"}
+
+5. System Health & Metadata
+GET /api
+Purpose: Root API heartbeat check.
+
+Auth: Public
+
+Input: None
+
+GET /api/health
+Purpose: Verifies PostgreSQL and Redis connectivity, returning total counts for hostels, buses, and active records.
+
+Auth: Public
+
+Input: None
+
+GET /api/hostels
+Purpose: Returns the master list of all campus hostels for dropdown filters and registration forms.
+
+Auth: Public
+
+Input: None
