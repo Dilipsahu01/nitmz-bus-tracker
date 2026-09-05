@@ -35,6 +35,8 @@ const Auth = {
       return data.user;
     } catch (e) {
       throw e;
+    }
+  },
   register: async (name, email, password, hostelId) => {
     try {
       const data = await apiFetch('/auth/register', 'POST', { name, email, password, role: 'student', hostelId });
