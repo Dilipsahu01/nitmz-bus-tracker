@@ -1478,7 +1478,6 @@ document.getElementById('saveSettings')?.addEventListener('click', async () => {
 });
 
 /* ================================================================
-/* ================================================================
    SSE STREAMING
 ================================================================ */
 let sseSource = null;
@@ -1490,6 +1489,8 @@ function startPolling() {
   if (sseSource) return;
 
   const token = LS.get('jwt_token') || '';
+  if (!token) return; // Don't even try without a token
+
   sseSource = new EventSource(`/api/buses/stream?token=${token}`);
 
   sseSource.onmessage = (event) => {
@@ -1517,8 +1518,10 @@ function startPolling() {
     updateStatusBig(false, false);
     sseSource.close();
     sseSource = null;
-    // SSE auto-reconnects natively, but we ensure our state is clean
-    setTimeout(startPolling, 3000);
+    // Only auto-reconnect if we still have a valid token
+    if (LS.get('jwt_token')) {
+      setTimeout(startPolling, 5000);
+    }
   };
 }
 
@@ -1543,44 +1546,64 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ================================================================
-   BOOT — no localStorage auto-login (prevents role escalation)
+   BOOT — Strict auth gate: halts ALL execution if not logged in
 ================================================================ */
 (function boot() {
-  Auth.requireAuth();
-  const user = Auth.getUser();
-  if (!user) {
-    Auth.logout();
-    return;
+  // ── Auth Gate ─────────────────────────────────────────────────
+  // Check if user is authenticated. If not, redirect and STOP.
+  if (!Auth.isLoggedIn()) {
+    window.location.replace('/login');
+    return; // Halt: nothing below runs
   }
 
+  const user = Auth.getUser();
+  if (!user || !user.role) {
+    // Token exists but user_info is missing/corrupt — force clean logout
+    try {
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('user_info');
+    } catch(e) {}
+    window.location.replace('/login');
+    return; // Halt: nothing below runs
+  }
+
+  // ── We are authenticated — safe to proceed ────────────────────
   S.role = user.role;
   S.userName = user.name;
   
   const btn = document.getElementById('logoutBtn');
-  btn.style.display = 'block';
-  btn.textContent = 'Logout';
-  btn.style.background = '';
-  btn.style.color = '';
-  btn.onclick = () => Auth.logout();
-  
-  document.getElementById('roleTag').textContent = user.name;
-  document.getElementById('roleTag').style.display = 'inline-flex';
-  
-  if (user.role === 'admin' || user.role === 'caretaker') {
-    document.getElementById('adminSettings').style.display = 'block';
-    document.getElementById('adminDiag').style.display = 'block';
-    document.getElementById('adminJson').style.display = 'block';
-  } else {
-    document.getElementById('adminSettings').style.display = 'none';
-    document.getElementById('adminDiag').style.display = 'none';
-    document.getElementById('adminJson').style.display = 'none';
+  if (btn) {
+    btn.style.display = 'block';
+    btn.textContent = 'Logout';
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.onclick = () => Auth.logout();
   }
   
-  // Restore logic removed: timings now dynamically populate from the selected bus from the DB.
-
-  // Load Bus List for Sidebar
+  const roleTag = document.getElementById('roleTag');
+  if (roleTag) {
+    roleTag.textContent = user.name;
+    roleTag.style.display = 'inline-flex';
+  }
+  
+  if (user.role === 'admin' || user.role === 'caretaker') {
+    const as = document.getElementById('adminSettings');
+    const ad = document.getElementById('adminDiag');
+    const aj = document.getElementById('adminJson');
+    if (as) as.style.display = 'block';
+    if (ad) ad.style.display = 'block';
+    if (aj) aj.style.display = 'block';
+  } else {
+    const as = document.getElementById('adminSettings');
+    const ad = document.getElementById('adminDiag');
+    const aj = document.getElementById('adminJson');
+    if (as) as.style.display = 'none';
+    if (ad) ad.style.display = 'none';
+    if (aj) aj.style.display = 'none';
+  }
+  
+  // ── Bus Selection UI ──────────────────────────────────────────
   window.updateBusSelectionUI = (buses) => {
-    // Re-evaluate button state based on S.tracking
     let btnText = S.tracking ? '⏹ Stop Tracking' : '▶ Track Live';
     
     buses.forEach(bus => {
@@ -1592,19 +1615,22 @@ document.addEventListener('visibilitychange', () => {
       
       if (isSelected) {
         card.classList.add('active');
-        actionsDiv.innerHTML = `
-          <button class="btn btn-white" id="trackBtn" onclick="toggleTracking()">${btnText}</button>
-          <div id="staleLabel" style="display:none;">⚠ No update for <span id="staleCount">0</span>s</div>
-        `;
+        if (actionsDiv) {
+          actionsDiv.innerHTML = `
+            <button class="btn btn-white" id="trackBtn" onclick="toggleTracking()">${btnText}</button>
+            <div id="staleLabel" style="display:none;">⚠ No update for <span id="staleCount">0</span>s</div>
+          `;
+        }
       } else {
         card.classList.remove('active');
-        actionsDiv.innerHTML = '';
+        if (actionsDiv) actionsDiv.innerHTML = '';
       }
     });
   };
 
   window.renderBusList = (buses) => {
     const container = document.getElementById('busListContainer');
+    if (!container) return;
     // Only build DOM once to prevent scroll jumping
     if (container.children.length === 0) {
       buses.forEach(bus => {
@@ -1612,27 +1638,28 @@ document.addEventListener('visibilitychange', () => {
         div.className = 'bus-card';
         div.id = `busCard-${bus.busNumber}`;
         div.onclick = () => {
-          if (S.selectedBusId === bus.busNumber) return; // Ignore if already selected
+          if (S.selectedBusId === bus.busNumber) return;
           
           // Stop tracking if switching buses to prevent state corruption
           if (S.tracking) window.toggleTracking();
           
           S.selectedBusId = bus.busNumber;
-          S.lastRouteOrigin = null; // Force route recalculation from new bus
+          S.lastRouteOrigin = null;
           window.updateBusSelectionUI(buses);
           
           if (bus.schedule) {
             const t = `${bus.schedule.fromHostelTime} - ${bus.schedule.fromMBSETime}`;
             document.getElementById('timingsDisplay').textContent = t;
-            document.getElementById('timingsInput').value = t;
+            const ti = document.getElementById('timingsInput');
+            if (ti) ti.value = t;
           }
           if (bus.driver) {
             const c = `${bus.driver.name} (${bus.driver.phone})`;
             document.getElementById('contactDisplay').textContent = c;
-            document.getElementById('contactInput').value = c;
+            const ci = document.getElementById('contactInput');
+            if (ci) ci.value = c;
           }
           document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${bus.status})</span>`;
-          fetchBus(); // Fetch immediately to update UI
 
           // Auto-collapse mobile sidebar on selection
           if (window.innerWidth <= 640) {
@@ -1677,6 +1704,9 @@ document.addEventListener('visibilitychange', () => {
           document.getElementById('contactDisplay').textContent = `${initialBus.driver.name} (${initialBus.driver.phone})`;
        }
     }
+  }).catch(err => {
+    console.error('Failed to fetch buses:', err.message);
+    // If the API returns 401, apiFetch already redirects to /login
   });
 
   buildHostelList();
@@ -1696,3 +1726,4 @@ document.addEventListener('visibilitychange', () => {
 </script>
 </body>
 </html>
+
