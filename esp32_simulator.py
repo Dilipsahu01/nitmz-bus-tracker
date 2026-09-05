@@ -50,21 +50,26 @@ def send_telemetry(bus_id, state):
     except Exception as e:
         print(f"Bus {bus_id} -> Failed: {e}")
 
+# List of active buses to simulate (Set to [5] for Bus 5 focus)
+ACTIVE_BUSES = [5]
+
 def run_simulation():
-    print("=== NIT-MZ Bus Tracker Multi-Bus Simulator ===")
+    print("=== NIT-MZ Bus Tracker ESP32 Simulator ===")
     print(f"Targeting: {API_ENDPOINT}")
-    print("Simulating", len(ALL_BUSES), "buses...\n")
+    print(f"Actively simulating Bus 5 at 1-second intervals...\n")
     
     while True:
-        for bus_id, state in buses_state.items():
-            state["lat"] += random.uniform(-0.0001, 0.0001)
-            state["lng"] += random.uniform(-0.0001, 0.0001)
-            state["speed"] = random.uniform(15.0, 40.0)
-            state["is_sos"] = False
+        for bus_id in ACTIVE_BUSES:
+            if bus_id in buses_state:
+                state = buses_state[bus_id]
+                state["lat"] += random.uniform(-0.0001, 0.0001)
+                state["lng"] += random.uniform(-0.0001, 0.0001)
+                state["speed"] = random.uniform(15.0, 40.0)
+                state["is_sos"] = False
 
-            send_telemetry(bus_id, state)
+                send_telemetry(bus_id, state)
             
-        time.sleep(5)
+        time.sleep(1)
 
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
