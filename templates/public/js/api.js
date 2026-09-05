@@ -9,7 +9,11 @@ const API_BASE = '/api';
  */
 async function apiFetch(endpoint, method = 'GET', body = null) {
   const headers = { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('jwt_token');
+  let token = null;
+  try {
+    token = localStorage.getItem('jwt_token');
+  } catch (e) {}
+  
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -25,10 +29,12 @@ async function apiFetch(endpoint, method = 'GET', body = null) {
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       // Force logout if token is invalid or expired
-      localStorage.removeItem('jwt_token');
-      localStorage.removeItem('user_info');
+      try {
+        localStorage.removeItem('jwt_token');
+        localStorage.removeItem('user_info');
+      } catch (e) {}
       if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+        window.location.replace('/login');
       }
     }
     throw new Error(data.error || data.message || 'API Error');

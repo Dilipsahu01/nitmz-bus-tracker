@@ -1489,7 +1489,7 @@ function startPolling() {
 
   if (sseSource) return;
 
-  const token = localStorage.getItem('jwt_token') || '';
+  const token = LS.get('jwt_token') || '';
   sseSource = new EventSource(`/api/buses/stream?token=${token}`);
 
   sseSource.onmessage = (event) => {
@@ -1548,7 +1548,10 @@ document.addEventListener('visibilitychange', () => {
 (function boot() {
   Auth.requireAuth();
   const user = Auth.getUser();
-  if (!user) return; // will redirect anyway
+  if (!user) {
+    Auth.logout();
+    return;
+  }
 
   S.role = user.role;
   S.userName = user.name;
