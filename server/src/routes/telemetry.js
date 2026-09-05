@@ -54,9 +54,9 @@ telemetryEmitter.setMaxListeners(0);
 let busHostelMapping = {};
 async function updateBusHostelMapping() {
   try {
-    const buses = await query('SELECT bus_number, hostel_id FROM buses');
+    const buses = await query('SELECT bus_number, assigned_hostel FROM buses');
     for (const b of buses) {
-      busHostelMapping[b.bus_number] = b.hostel_id;
+      busHostelMapping[b.bus_number] = b.assigned_hostel;
     }
   } catch (err) {
     console.error('Failed to update busHostelMapping:', err.message);

@@ -19,47 +19,56 @@ function showToast(msg, type = 'white', duration = 4000) {
 window.showToast = showToast;
 
 const Auth = {
-  isLoggedIn: () => !!localStorage.getItem('jwt_token'),
+  isLoggedIn: () => {
+    try {
+      return !!localStorage.getItem('jwt_token');
+    } catch (e) {
+      return false;
+    }
+  },
   getUser: () => {
     try {
-      return JSON.parse(localStorage.getItem('user_info'));
+      const data = localStorage.getItem('user_info');
+      return data ? JSON.parse(data) : null;
     } catch {
       return null;
     }
   },
   login: async (email, password) => {
+    const data = await apiFetch('/auth/login', 'POST', { email, password });
     try {
-      const data = await apiFetch('/auth/login', 'POST', { email, password });
       localStorage.setItem('jwt_token', data.token);
       localStorage.setItem('user_info', JSON.stringify(data.user));
-      return data.user;
     } catch (e) {
-      throw e;
+      console.warn('LocalStorage not available');
     }
+    return data.user;
   },
   register: async (name, email, password, hostelId) => {
+    const data = await apiFetch('/auth/register', 'POST', { name, email, password, role: 'student', hostelId });
     try {
-      const data = await apiFetch('/auth/register', 'POST', { name, email, password, role: 'student', hostelId });
       localStorage.setItem('jwt_token', data.token);
       localStorage.setItem('user_info', JSON.stringify(data.user));
-      return data.user;
     } catch (e) {
-      throw e;
+      console.warn('LocalStorage not available');
     }
+    return data.user;
   },
   logout: () => {
-    localStorage.removeItem('jwt_token');
-    localStorage.removeItem('user_info');
+    try {
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('user_info');
+    } catch (e) {}
     window.location.href = '/login';
   },
   requireAuth: () => {
     if (!Auth.isLoggedIn()) {
-      window.location.href = '/login';
+      window.location.replace('/login');
     }
   },
   requireNoAuth: () => {
     if (Auth.isLoggedIn()) {
-      window.location.href = '/';
+      window.location.replace('/');
     }
   }
 };
