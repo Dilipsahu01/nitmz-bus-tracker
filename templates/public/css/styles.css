@@ -187,6 +187,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .bus-pulse.on{animation:bpulse 1.8s ease-out infinite;}
 @keyframes bpulse{0%{transform:scale(.5);opacity:.5}100%{transform:scale(2);opacity:0}}
 .bus-icon{width:42px;height:42px;position:relative;z-index:1;transition:transform .6s cubic-bezier(.22,1,.36,1);}
+.bus-root.offline { filter: grayscale(100%); opacity: 0.6; }
 
 /* User marker */
 .user-dot {

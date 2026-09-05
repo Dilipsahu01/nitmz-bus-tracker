@@ -431,14 +431,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
               <div class="metric-val lg" id="rpSpeed">--</div>
               <div style="font-size:10px;color:var(--muted);font-family:var(--mono);">km/h</div>
             </div>
-            <div class="metric">
+            <div class="metric" id="networkMetric">
               <div class="label">Network</div>
               <div id="rpNet" class="metric-val sm">--</div>
             </div>
           </div>
         </div>
 
-        <!-- Signal Quality (visible to all) -->
+        <!-- Signal Quality (admin/caretaker only — hidden for students in boot()) -->
         <div class="rp-section" id="signalSection">
           <div class="rp-title">GPS Signal</div>
           <div class="g2">
@@ -553,7 +553,17 @@ const ANIM_MS  = 950;
 const ROUTE_REFETCH_DIST = 60;
 const PROXIMITY_ALERT_M  = 300;
 const GEOFENCE_RADIUS_M  = 800;
-const STALE_THRESHOLD_S  = 15; // warn if no data for 15s
+const STALE_THRESHOLD_S  = 15; // warn after 15s of no data for selected bus
+const OFFLINE_THRESHOLD_S = 120; // grey out bus marker after 2 minutes of silence
+
+// Map bounds: North Durtlang ↔ Bawngkawn ↔ Chaltlang region of Aizawl
+const MAP_BOUNDS = L.latLngBounds(
+  [23.730, 92.700],  // SW corner (south of MBSE / Bawngkawn)
+  [23.810, 92.750]   // NE corner (north of BH2 / North Durtlang)
+);
+
+// Per-bus last-seen timestamps for offline detection
+const busLastSeen = new Map();
 
 const HOSTELS = [
   { id: 'bh1', name: 'Boys Hostel 1',  coords: [23.792917, 92.727789], type: 'boys' },
@@ -690,12 +700,20 @@ let currentTileLayer = null;
 
 function initMap() {
   if (map) return;
-  map = L.map('map', { zoomControl:true, attributionControl:true }).setView(DEFAULT_CENTER, 16);
+  map = L.map('map', {
+    zoomControl: true,
+    attributionControl: true,
+    maxBounds: MAP_BOUNDS,
+    maxBoundsViscosity: 1.0,  // Hard lock — cannot drag outside bounds
+    minZoom: 13,
+    maxZoom: 18
+  }).setView(DEFAULT_CENTER, 15);
+
   currentTileLayer = TILE_LAYERS.dark();
   currentTileLayer.addTo(map);
 
   HOSTELS.forEach(h => {
-    const color = h.type === 'boys' ? '#ffffff' : '#888888';
+    const color = h.type === 'boys' ? '#ffffff' : (h.type === 'girls' ? '#f472b6' : '#fbbf24');
     const icon = L.divIcon({
       className: '',
       html: `<div style="width:10px;height:10px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.3);box-shadow:0 2px 6px rgba(0,0,0,.7)"></div>`,
@@ -705,8 +723,6 @@ function initMap() {
       .bindPopup(`<strong>${h.name}</strong>`)
       .on('click', () => selectHostel(h.id));
   });
-
-
 
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => { if(map) map.invalidateSize({pan:false}); })
@@ -1153,24 +1169,40 @@ function setConn(state) {
 function startStaleTimer() {
   clearInterval(S.staleTimer);
   S.staleTimer = setInterval(() => {
-    if (!S.lastDataTime || !S.tracking) return;
-    const secs = Math.floor((Date.now() - S.lastDataTime) / 1000);
-    const isStale = secs >= STALE_THRESHOLD_S;
+    if (!S.tracking) return;
+    const now = Date.now();
 
-    document.getElementById('staleLabel').style.display = isStale ? 'block' : 'none';
-    document.getElementById('staleCount').textContent = secs;
-    document.getElementById('stalePill').style.display = isStale ? 'inline' : 'none';
-    document.getElementById('staleWarning').style.display = isStale ? 'block' : 'none';
-    document.getElementById('staleCountRp').textContent = secs;
-    
-    // Toggle marker offline state
-    const marker = busMarkers.get(S.selectedBusId);
-    const root = marker && marker.getElement() && marker.getElement().querySelector('.bus-root');
-    if (root) {
-      if (isStale) root.classList.add('offline');
-      else root.classList.remove('offline');
+    // ── Selected bus staleness (quick 15s warning) ────────────
+    if (S.lastDataTime) {
+      const secs = Math.floor((now - S.lastDataTime) / 1000);
+      const isStale = secs >= STALE_THRESHOLD_S;
+
+      const sl = document.getElementById('staleLabel');
+      const sc = document.getElementById('staleCount');
+      const sp = document.getElementById('stalePill');
+      const sw = document.getElementById('staleWarning');
+      const sr = document.getElementById('staleCountRp');
+      if (sl) sl.style.display = isStale ? 'block' : 'none';
+      if (sc) sc.textContent = secs;
+      if (sp) sp.style.display = isStale ? 'inline' : 'none';
+      if (sw) sw.style.display = isStale ? 'block' : 'none';
+      if (sr) sr.textContent = secs;
     }
-  }, 1000);
+
+    // ── All buses: mark offline after 2 minutes of silence ────
+    busMarkers.forEach((marker, busId) => {
+      const lastSeen = busLastSeen.get(busId);
+      const root = marker.getElement() && marker.getElement().querySelector('.bus-root');
+      if (!root) return;
+
+      if (!lastSeen || (now - lastSeen) > OFFLINE_THRESHOLD_S * 1000) {
+        root.classList.add('offline');
+        setPulse(busId, false);
+      } else {
+        root.classList.remove('offline');
+      }
+    });
+  }, 2000);
 }
 
 function stopStaleTimer() {
@@ -1183,6 +1215,9 @@ function stopStaleTimer() {
 ================================================================ */
 function onBusData(busId, data, status) {
   const isSelected = (busId === S.selectedBusId);
+
+  // Track last-seen for offline detection (all buses)
+  busLastSeen.set(busId, Date.now());
 
   if (isSelected) {
     S.lastData = data;
@@ -1226,8 +1261,8 @@ function onBusData(busId, data, status) {
     document.getElementById('statusText').textContent =
       hasFix ? (moving ? `Moving · ${speed.toFixed(1)} km/h` : 'Parked on campus') : 'Searching GPS signal...';
 
-    // Network type — normalised
-    if (data.net_type) {
+    // Network type — only visible to admin/caretaker
+    if (data.net_type && (S.role === 'admin' || S.role === 'caretaker')) {
       const nt = normaliseNetType(data.net_type);
       const nb = document.getElementById('netBadge');
       nb.textContent = nt;
@@ -1235,13 +1270,13 @@ function onBusData(busId, data, status) {
       document.getElementById('rpNet').textContent = nt;
     }
 
-    // Signal quality (visible to all)
-    const hdop = data.hdop != null ? parseFloat(data.hdop) : null;
-    updateSignalQuality(hdop, data.satellites);
-    document.getElementById('dSat').textContent = data.satellites ?? '--';
-
-    // Admin / Caretaker diagnostic fields
+    // Signal quality & satellite count — admin/caretaker only
     if (S.role === 'admin' || S.role === 'caretaker') {
+      const hdop = data.hdop != null ? parseFloat(data.hdop) : null;
+      updateSignalQuality(hdop, data.satellites);
+      document.getElementById('dSat').textContent = data.satellites ?? '--';
+
+      // Full diagnostic fields
       document.getElementById('dLat').textContent  = (hasFix && lat) ? lat.toFixed(6) : '--';
       document.getElementById('dLng').textContent  = (hasFix && lng) ? lng.toFixed(6) : '--';
       document.getElementById('dHdop').textContent = hdop != null ? hdop.toFixed(1) : '--';
@@ -1593,13 +1628,21 @@ document.addEventListener('visibilitychange', () => {
     if (as) as.style.display = 'block';
     if (ad) ad.style.display = 'block';
     if (aj) aj.style.display = 'block';
+    // Signal & diagnostics visible for admin/caretaker
   } else {
+    // Student: hide ALL hardware diagnostic panels
     const as = document.getElementById('adminSettings');
     const ad = document.getElementById('adminDiag');
     const aj = document.getElementById('adminJson');
+    const ss = document.getElementById('signalSection');   // GPS Signal (satellites, HDOP)
+    const nb = document.getElementById('netBadge');         // Network badge in top bar
+    const nm = document.getElementById('networkMetric');    // Network metric in right panel
     if (as) as.style.display = 'none';
     if (ad) ad.style.display = 'none';
     if (aj) aj.style.display = 'none';
+    if (ss) ss.style.display = 'none';
+    if (nb) nb.style.display = 'none';
+    if (nm) nm.style.display = 'none';
   }
   
   // ── Bus Selection UI ──────────────────────────────────────────

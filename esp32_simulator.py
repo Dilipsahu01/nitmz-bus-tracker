@@ -60,7 +60,7 @@ def run_simulation():
             state["lat"] += random.uniform(-0.0001, 0.0001)
             state["lng"] += random.uniform(-0.0001, 0.0001)
             state["speed"] = random.uniform(15.0, 40.0)
-            state["is_sos"] = (random.random() < 0.01)
+            state["is_sos"] = False
 
             send_telemetry(bus_id, state)
             
