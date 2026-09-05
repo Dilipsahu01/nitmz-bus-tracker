@@ -19,25 +19,33 @@ function haversine(lat1, lon1, lat2, lon2) {
  * Normalize an incoming telemetry payload.
  *
  * The ESP32 firmware sends:
- *   { has_fix, latitude, longitude, speed_kmh, satellites, hdop, timestamp, status, net_type }
+ *   { has_fix, latitude, longitude, speed_kmh, satellites, hdop, timestamp, status, net_type, bus_id }
  *
  * The Flutter app webhook / simulator sends:
  *   { device_id, bus_id, lat, lng, speed, accuracy, ts, status }
  *
- * This function merges both shapes into a unified internal format.
+ * This function merges all variant shapes into a unified internal format.
  */
 function normalizeTelemetry(body) {
+  const rawLat = body.lat ?? body.latitude ?? body.lat_deg;
+  const rawLng = body.lng ?? body.longitude ?? body.lng_deg ?? body.long;
+  
+  const parsedLat = (rawLat !== undefined && rawLat !== null && !isNaN(Number(rawLat))) ? Number(rawLat) : undefined;
+  const parsedLng = (rawLng !== undefined && rawLng !== null && !isNaN(Number(rawLng))) ? Number(rawLng) : undefined;
+
+  const rawBusId = body.bus_id ?? body.bus_number ?? body.busId ?? body.busNo ?? body.bus ?? null;
+
   return {
-    device_id: body.device_id || null,
-    bus_id:    body.bus_id || null,
-    lat:       body.lat ?? body.latitude,
-    lng:       body.lng ?? body.longitude,
-    speed:     body.speed ?? body.speed_kmh ?? 0,
-    accuracy:  body.accuracy ?? body.hdop ?? 1.0,
+    device_id: body.device_id || body.deviceId || null,
+    bus_id:    rawBusId !== null ? String(rawBusId) : null,
+    lat:       parsedLat,
+    lng:       parsedLng,
+    speed:     Number(body.speed ?? body.speed_kmh ?? body.spd ?? 0),
+    accuracy:  Number(body.accuracy ?? body.hdop ?? 1.0),
     has_fix:   body.has_fix ?? (body.status === 'active') ?? null,
-    satellites: body.satellites ?? 0,
-    hdop:      body.hdop ?? body.accuracy ?? 99.9,
-    net_type:  body.net_type || 'unknown',
+    satellites: Number(body.satellites ?? 0),
+    hdop:      Number(body.hdop ?? body.accuracy ?? 99.9),
+    net_type:  body.net_type || body.netType || 'unknown',
     ts:        body.ts ?? body.timestamp ?? null,
     status:    body.status || 'idle',
     is_sos:    body.is_sos === true || body.is_sos === 'true'
@@ -67,20 +75,21 @@ setInterval(updateBusHostelMapping, 60000); // Refresh every minute
 
 (async () => {
   try {
-    // Wait slightly to ensure connection is established by redis.js
     setTimeout(async () => {
-      if (redisSub.isOpen) {
+      if (redisSub && redisSub.isOpen) {
         await redisSub.subscribe('live_update', (message) => {
           try {
             const cacheEntry = JSON.parse(message);
             telemetryEmitter.emit('live_update', cacheEntry);
-          } catch(e) {}
+          } catch(e) {
+            console.error('[telemetry] Error parsing Redis pubsub message:', e.message);
+          }
         });
         console.log('✅ Subscribed to Redis live_update channel');
       }
     }, 1000);
   } catch (err) {
-    console.error('Failed to subscribe to redis pubsub', err);
+    console.error('[telemetry] Failed to subscribe to redis pubsub:', err.message || err);
   }
 })();
 
@@ -91,54 +100,84 @@ router.post('/api/update-location', requireApiKey(), async (req, res) => {
   try {
     const d = normalizeTelemetry(req.body);
     if (d.lat === undefined || d.lng === undefined) {
+      console.error('[telemetry] POST /api/update-location 400 Bad Request: Missing lat/lng in payload:', req.body);
       return res.status(400).json({ status: 'error', message: 'lat/latitude and lng/longitude are required' });
     }
 
     const parsedBusNumber = Number(String(d.bus_id || '').replace(/[^0-9]/g, ''));
-    if (!parsedBusNumber) return res.status(400).json({ error: 'invalid bus id' });
+    if (!parsedBusNumber) {
+      console.error('[telemetry] POST /api/update-location 400 Bad Request: Invalid or missing bus ID in payload:', req.body);
+      return res.status(400).json({ status: 'error', message: 'invalid bus id' });
+    }
 
-    // Store in Redis Hot Cache
+    // Prepare hot cache entry
     const cacheEntry = {
       ...d,
       bus_number: parsedBusNumber,
-      ts: new Date().toISOString()
+      ts: d.ts || new Date().toISOString()
     };
-    await redisClient.hSet('hotCache', String(parsedBusNumber), JSON.stringify(cacheEntry));
-    await redisClient.rPush('telemetryQueue', JSON.stringify(cacheEntry));
 
-    // Broadcast instantly to all Node.js instances via Redis Pub/Sub
-    await redisClient.publish('live_update', JSON.stringify(cacheEntry));
-
-    // SOS Alerts are rare, so we can DB query them immediately
-    if (d.is_sos) {
-      const nId = 'n_' + crypto.randomBytes(6).toString('hex');
-      await query(
-        `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
-        [nId, 'SOS ALERT', `Emergency SOS triggered on Bus ${parsedBusNumber}!`, 'alert', parsedBusNumber, 'system']
-      );
+    // Store in Redis Hot Cache if connected
+    if (redisClient && redisClient.isOpen) {
+      try {
+        await redisClient.hSet('hotCache', String(parsedBusNumber), JSON.stringify(cacheEntry));
+        await redisClient.rPush('telemetryQueue', JSON.stringify(cacheEntry));
+        await redisClient.publish('live_update', JSON.stringify(cacheEntry));
+      } catch (redisErr) {
+        console.error('[telemetry] Redis hotCache write error:', redisErr.message);
+      }
+    } else {
+      // Fallback: direct DB update if Redis is offline
+      try {
+        await query(
+          `UPDATE buses SET latitude = $1, longitude = $2, speed = $3, status = $4, updated_at = NOW() WHERE bus_number = $5`,
+          [d.lat, d.lng, d.speed || 0, d.status === 'active' ? 'running' : (d.status || 'idle'), parsedBusNumber]
+        );
+      } catch (dbErr) {
+        console.error('[telemetry] Fallback DB update error:', dbErr.message);
+      }
     }
 
-    // Geofence checking is also relatively cheap if done selectively or in background, 
-    // but we'll do it immediately for safety
-    const distFromCampus = haversine(d.lat, d.lng, 23.7271, 92.7176);
-    if (distFromCampus > 4000) { // 4km boundary
-      const recent = await query(
-        `SELECT id FROM notifications WHERE type = 'warning' AND bus_number = $1 AND sent_at > NOW() - INTERVAL '15 minutes'`, 
-        [parsedBusNumber]
-      );
-      if (recent.length === 0) {
+    // Always emit event locally for active SSE subscribers
+    telemetryEmitter.emit('live_update', cacheEntry);
+
+    // SOS Alerts
+    if (d.is_sos) {
+      try {
         const nId = 'n_' + crypto.randomBytes(6).toString('hex');
         await query(
           `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
-          [nId, 'Geofence Alert', `Bus ${parsedBusNumber} has left the 4km campus boundary.`, 'warning', parsedBusNumber, 'system']
+          [nId, 'SOS ALERT', `Emergency SOS triggered on Bus ${parsedBusNumber}!`, 'alert', parsedBusNumber, 'system']
         );
+      } catch (sosErr) {
+        console.error('[telemetry] SOS alert creation error:', sosErr.message);
       }
+    }
+
+    // Geofence checking
+    try {
+      const distFromCampus = haversine(d.lat, d.lng, 23.7271, 92.7176);
+      if (distFromCampus > 4000) { // 4km boundary
+        const recent = await query(
+          `SELECT id FROM notifications WHERE type = 'warning' AND bus_number = $1 AND sent_at > NOW() - INTERVAL '15 minutes'`, 
+          [parsedBusNumber]
+        );
+        if (recent.length === 0) {
+          const nId = 'n_' + crypto.randomBytes(6).toString('hex');
+          await query(
+            `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
+            [nId, 'Geofence Alert', `Bus ${parsedBusNumber} has left the 4km campus boundary.`, 'warning', parsedBusNumber, 'system']
+          );
+        }
+      }
+    } catch (geoErr) {
+      console.error('[telemetry] Geofence check error:', geoErr.message);
     }
 
     res.json({ message: 'Hot Path ingest success', status: 'success' });
   } catch (err) {
-    console.error('[telemetry] POST /api/update-location error:', err.message);
-    res.status(500).json({ status: 'error', message: 'Server error' });
+    console.error('[telemetry] POST /api/update-location server error:', err.stack || err.message || err);
+    res.status(500).json({ status: 'error', message: err.message || 'Server error' });
   }
 });
 
@@ -148,46 +187,97 @@ router.post('/endpoint', requireApiKey(), async (req, res) => {
   try {
     const d = normalizeTelemetry(req.body);
     if (d.lat === undefined || d.lng === undefined) {
-      return res.status(400).json({ status: 'error' });
+      console.error('[telemetry] POST /endpoint 400 Bad Request: Missing lat/lng:', req.body);
+      return res.status(400).json({ status: 'error', message: 'lat and lng required' });
     }
 
     const busNum = Number(String(d.bus_id || '5').replace(/[^0-9]/g, '')) || 5;
     
-    // Store in Redis Hot Cache
     const cacheEntry = {
       ...d,
       bus_number: busNum,
       device_id: d.device_id || 'ESP32-Device-1',
-      ts: new Date().toISOString()
+      ts: d.ts || new Date().toISOString()
     };
-    await redisClient.hSet('hotCache', String(busNum), JSON.stringify(cacheEntry));
-    await redisClient.rPush('telemetryQueue', JSON.stringify(cacheEntry));
 
-    // Broadcast instantly to all Node.js instances via Redis Pub/Sub
-    await redisClient.publish('live_update', JSON.stringify(cacheEntry));
+    if (redisClient && redisClient.isOpen) {
+      try {
+        await redisClient.hSet('hotCache', String(busNum), JSON.stringify(cacheEntry));
+        await redisClient.rPush('telemetryQueue', JSON.stringify(cacheEntry));
+        await redisClient.publish('live_update', JSON.stringify(cacheEntry));
+      } catch (redisErr) {
+        console.error('[telemetry] Redis legacy endpoint error:', redisErr.message);
+      }
+    } else {
+      try {
+        await query(
+          `UPDATE buses SET latitude = $1, longitude = $2, speed = $3, updated_at = NOW() WHERE bus_number = $4`,
+          [d.lat, d.lng, d.speed || 0, busNum]
+        );
+      } catch (dbErr) {
+        console.error('[telemetry] Legacy DB update error:', dbErr.message);
+      }
+    }
 
+    telemetryEmitter.emit('live_update', cacheEntry);
     res.json({ status: 'success' });
   } catch (err) {
-    console.error('[telemetry] POST /endpoint error:', err.message);
-    res.status(500).json({ status: 'error' });
+    console.error('[telemetry] POST /endpoint server error:', err.stack || err.message || err);
+    res.status(500).json({ status: 'error', message: err.message || 'Server error' });
   }
 });
 
 // --- HOT PATH: SSE Broadcast to Clients ---
 router.get('/api/buses/stream', requireAuth(), async (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  
-  // Send current Redis state immediately
   try {
-    const allData = await redisClient.hGetAll('hotCache');
-    let initialData = Object.values(allData).map(val => JSON.parse(val));
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
     
+    // Fetch current state snapshot
+    let initialData = [];
+    if (redisClient && redisClient.isOpen) {
+      try {
+        const allData = await redisClient.hGetAll('hotCache');
+        initialData = Object.values(allData).map(val => JSON.parse(val));
+      } catch (redisErr) {
+        console.error('[SSE stream] Error reading hotCache from Redis:', redisErr.message);
+      }
+    }
+
+    // DB Fallback if Redis is offline or hotCache empty
+    if (initialData.length === 0) {
+      try {
+        const rows = await query(`
+          SELECT bus_number, status, latitude, longitude, speed, route, assigned_hostel, updated_at
+          FROM buses WHERE is_enabled = true
+        `);
+        initialData = rows.map(r => ({
+          bus_number: parseInt(r.bus_number, 10),
+          status: r.status,
+          lat: Number(r.latitude),
+          lng: Number(r.longitude),
+          speed: Number(r.speed),
+          route: r.route,
+          assigned_hostel: r.assigned_hostel,
+          ts: r.updated_at
+        }));
+      } catch (dbErr) {
+        console.error('[SSE stream] Fallback DB query error:', dbErr.message);
+      }
+    }
+
     // Filter initial data for RBAC
     const isGlobalViewer = req.auth.role === 'admin' || req.auth.role === 'caretaker';
+    const userHostel = req.auth.hostelId || req.auth.hostel_id;
     if (!isGlobalViewer) {
-      initialData = initialData.filter(d => req.auth.hostelId === busHostelMapping[d.bus_number]);
+      initialData = initialData.filter(d => {
+        const assigned = busHostelMapping[d.bus_number] || d.assigned_hostel || d.hostel;
+        return userHostel && assigned && String(userHostel).trim().toUpperCase() === String(assigned).trim().toUpperCase();
+      });
       initialData = initialData.map(d => {
         const { satellites, hdop, net_type, ...cleanData } = d;
         return cleanData;
@@ -195,41 +285,48 @@ router.get('/api/buses/stream', requireAuth(), async (req, res) => {
     }
 
     res.write(`data: ${JSON.stringify(initialData)}\n\n`);
+
+    // Stream future updates
+    const onUpdate = (data) => {
+      try {
+        const isGlobalViewer = req.auth.role === 'admin' || req.auth.role === 'caretaker';
+        const userHostel = req.auth.hostelId || req.auth.hostel_id;
+        const assigned = busHostelMapping[data.bus_number] || data.assigned_hostel || data.hostel;
+
+        if (!isGlobalViewer && (!userHostel || !assigned || String(userHostel).trim().toUpperCase() !== String(assigned).trim().toUpperCase())) {
+          return; // Skip data not belonging to student's hostel
+        }
+
+        if (!res.writable) {
+          req.destroy();
+          return;
+        }
+
+        let chunk;
+        if (req.auth.role === 'student') {
+          const { satellites, hdop, net_type, ...cleanData } = data;
+          chunk = `data: ${JSON.stringify([cleanData])}\n\n`;
+        } else {
+          chunk = `data: ${JSON.stringify([data])}\n\n`;
+        }
+
+        const writeSuccess = res.write(chunk);
+        if (!writeSuccess) {
+          req.destroy();
+        }
+      } catch (err) {
+        console.error('[SSE stream] Error writing chunk to client:', err.message);
+      }
+    };
+    
+    telemetryEmitter.on('live_update', onUpdate);
+    req.on('close', () => telemetryEmitter.removeListener('live_update', onUpdate));
   } catch (err) {
-    console.error('Failed to get initial redis state', err);
+    console.error('[telemetry] GET /api/buses/stream error:', err.stack || err.message || err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'SSE initialization failed' });
+    }
   }
-
-  // Stream future updates
-  const onUpdate = (data) => {
-    // RBAC: strict hostel scoping
-    const isGlobalViewer = req.auth.role === 'admin' || req.auth.role === 'caretaker';
-    if (!isGlobalViewer && req.auth.hostelId !== busHostelMapping[data.bus_number]) {
-      return; // Skip data not belonging to student's hostel
-    }
-
-    // Network backpressure check
-    if (!res.writable) {
-      req.destroy();
-      return;
-    }
-
-    let chunk;
-    // Strip hardware diagnostics for students
-    if (req.auth.role === 'student') {
-      const { satellites, hdop, net_type, ...cleanData } = data;
-      chunk = `data: ${JSON.stringify([cleanData])}\n\n`;
-    } else {
-      chunk = `data: ${JSON.stringify([data])}\n\n`;
-    }
-
-    const writeSuccess = res.write(chunk);
-    if (!writeSuccess) {
-      req.destroy();
-    }
-  };
-  
-  telemetryEmitter.on('live_update', onUpdate);
-  req.on('close', () => telemetryEmitter.removeListener('live_update', onUpdate));
 });
 
 // ─── GET /api/location/latest ───────────────────────────────────

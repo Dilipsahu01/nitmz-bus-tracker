@@ -51,10 +51,10 @@ app.use((req, _res, next) => {
 // ─── API Routes ──────────────────────────────────────────────────
 app.use(healthRoutes);
 app.use(authRoutes);
+app.use(telemetryRoutes);
 app.use(busRoutes);
 app.use(scheduleRoutes);
 app.use(notificationRoutes);
-app.use(telemetryRoutes);
 
 // ─── Serve Web Dashboard ─────────────────────────────────────────
 // The dashboard files are served from the project root's templates/ dir

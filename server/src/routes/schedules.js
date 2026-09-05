@@ -4,11 +4,22 @@ const crypto = require('crypto');
 const { query } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
+function hostelsMatch(h1, h2) {
+  if (!h1 || !h2) return false;
+  return String(h1).trim().toUpperCase() === String(h2).trim().toUpperCase();
+}
+
 async function assertCaretakerAccess(busNumber, auth) {
   const rows = await query('SELECT bus_number, assigned_hostel FROM buses WHERE bus_number = $1 LIMIT 1', [busNumber]);
   if (!rows.length) return { ok: false, code: 404, message: 'Bus not found' };
-  if (auth.role === 'caretaker' && auth.hostelId && rows[0].assigned_hostel !== auth.hostelId) {
-    return { ok: false, code: 403, message: 'Caretaker can only update own hostel buses' };
+  
+  if (auth.role === 'caretaker') {
+    const userHostel = auth.hostelId || auth.hostel_id;
+    const bus = rows[0];
+    const busHostel = bus.assignedHostel || bus.assigned_hostel;
+    if (!userHostel || !busHostel || !hostelsMatch(userHostel, busHostel)) {
+      return { ok: false, code: 403, message: 'Caretaker can only update own hostel buses' };
+    }
   }
   return { ok: true, bus: rows[0] };
 }
@@ -17,12 +28,13 @@ router.get('/api/schedules', requireAuth(['student', 'caretaker', 'admin']), asy
   try {
     let reqHostel = req.query.hostel;
     const date = req.query.date;
+    const userHostel = req.auth.hostelId || req.auth.hostel_id;
 
     if (req.auth.role === 'student') {
-      if (reqHostel && reqHostel !== req.auth.hostelId) {
+      if (reqHostel && userHostel && !hostelsMatch(reqHostel, userHostel)) {
         return res.status(403).json({ message: 'Forbidden' });
       }
-      reqHostel = req.auth.hostelId;
+      reqHostel = userHostel;
     }
 
     let sql = `
@@ -35,7 +47,7 @@ router.get('/api/schedules', requireAuth(['student', 'caretaker', 'admin']), asy
     let paramIdx = 1;
 
     if (reqHostel) {
-      sql += ` AND b.assigned_hostel = $${paramIdx++}`;
+      sql += ` AND LOWER(b.assigned_hostel) = LOWER($${paramIdx++})`;
       params.push(reqHostel);
     }
     if (date) {

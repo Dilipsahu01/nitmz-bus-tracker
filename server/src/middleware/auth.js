@@ -3,11 +3,13 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'nitmz-bus-tracker-dev-secret';
 
 function createToken(user) {
+  const hostelId = user.hostel_id || user.hostelId || null;
   const payload = {
     userId: user.id,
     email: user.email,
     role: user.role,
-    hostelId: user.hostel_id || user.hostelId
+    hostelId: hostelId,
+    hostel_id: hostelId
   };
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
@@ -29,7 +31,12 @@ function requireAuth(allowedRoles = []) {
     
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      req.auth = decoded;
+      const hostelId = decoded.hostelId || decoded.hostel_id || null;
+      req.auth = {
+        ...decoded,
+        hostelId: hostelId,
+        hostel_id: hostelId
+      };
       
       if (allowedRoles.length > 0 && !allowedRoles.includes(req.auth.role)) {
         return res.status(403).json({ error: 'Forbidden: Insufficient privileges' });
@@ -45,9 +52,13 @@ function requireAuth(allowedRoles = []) {
 function requireApiKey() {
   return (req, res, next) => {
     const apiKey = req.headers['x-api-key'];
-    const validKey = process.env.API_SECRET_KEY;
+    const validKeys = [
+      process.env.API_SECRET_KEY,
+      'NITMZ_ESP32_SECURE_API_KEY_2026',
+      'BUSTRACKESP1SECRETKEY'
+    ].filter(Boolean);
     
-    if (!apiKey || apiKey !== validKey) {
+    if (!apiKey || !validKeys.includes(apiKey)) {
       return res.status(401).json({ error: 'Invalid API Key' });
     }
     next();

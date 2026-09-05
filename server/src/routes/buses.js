@@ -74,11 +74,22 @@ function mapBus(row) {
   };
 }
 
+function hostelsMatch(h1, h2) {
+  if (!h1 || !h2) return false;
+  return String(h1).trim().toUpperCase() === String(h2).trim().toUpperCase();
+}
+
 async function assertCaretakerAccess(busNumber, auth) {
   const rows = await query('SELECT bus_number, assigned_hostel FROM buses WHERE bus_number = $1 LIMIT 1', [busNumber]);
   if (!rows.length) return { ok: false, code: 404, message: 'Bus not found' };
-  if (auth.role === 'caretaker' && auth.hostelId && rows[0].assigned_hostel !== auth.hostelId) {
-    return { ok: false, code: 403, message: 'Caretaker can only update own hostel buses' };
+  
+  if (auth.role === 'caretaker') {
+    const userHostel = auth.hostelId || auth.hostel_id;
+    const bus = rows[0];
+    const busHostel = bus.assignedHostel || bus.assigned_hostel;
+    if (!userHostel || !busHostel || !hostelsMatch(userHostel, busHostel)) {
+      return { ok: false, code: 403, message: 'Caretaker can only update own hostel buses' };
+    }
   }
   return { ok: true, bus: rows[0] };
 }
@@ -86,17 +97,19 @@ async function assertCaretakerAccess(busNumber, auth) {
 router.get('/api/buses', requireAuth(['student', 'caretaker', 'admin']), async (req, res) => {
   try {
     let reqHostel = req.query.hostel;
+    const userHostel = req.auth.hostelId || req.auth.hostel_id;
+
     if (req.auth.role === 'student') {
-      if (reqHostel && reqHostel !== req.auth.hostelId) {
+      if (reqHostel && userHostel && !hostelsMatch(reqHostel, userHostel)) {
         return res.status(403).json({ message: 'Forbidden' });
       }
-      reqHostel = req.auth.hostelId;
+      reqHostel = userHostel;
     }
 
     let sql = BUS_SELECT;
     let params = [];
     if (reqHostel) {
-      sql += ' WHERE b.assigned_hostel = $1';
+      sql += ' WHERE LOWER(b.assigned_hostel) = LOWER($1)';
       params.push(reqHostel);
     }
 
@@ -111,17 +124,19 @@ router.get('/api/buses', requireAuth(['student', 'caretaker', 'admin']), async (
 router.get('/api/all-buses', requireAuth(['student', 'caretaker', 'admin']), async (req, res) => {
   try {
     let reqHostel = req.query.hostel;
+    const userHostel = req.auth.hostelId || req.auth.hostel_id;
+
     if (req.auth.role === 'student') {
-      if (reqHostel && reqHostel !== req.auth.hostelId) {
+      if (reqHostel && userHostel && !hostelsMatch(reqHostel, userHostel)) {
         return res.status(403).json({ status: 'error', message: 'Forbidden' });
       }
-      reqHostel = req.auth.hostelId;
+      reqHostel = userHostel;
     }
 
     let sql = BUS_SELECT;
     let params = [];
     if (reqHostel) {
-      sql += ' WHERE b.assigned_hostel = $1';
+      sql += ' WHERE LOWER(b.assigned_hostel) = LOWER($1)';
       params.push(reqHostel);
     }
 
@@ -150,11 +165,12 @@ router.get('/api/buses/live', requireAuth(), async (req, res) => {
       WHERE b.is_enabled = true
     `;
     let params = [];
+    const userHostel = req.auth.hostelId || req.auth.hostel_id;
 
     // Filter buses by hostel for students and caretakers
-    if (req.auth.role === 'student' || req.auth.role === 'caretaker') {
-      sql += ' AND b.assigned_hostel = $1';
-      params.push(req.auth.hostelId);
+    if ((req.auth.role === 'student' || req.auth.role === 'caretaker') && userHostel) {
+      sql += ' AND LOWER(b.assigned_hostel) = LOWER($1)';
+      params.push(userHostel);
     }
 
     const rows = await query(sql, params);
@@ -194,15 +210,24 @@ router.get('/api/buses/live', requireAuth(), async (req, res) => {
   }
 });
 
-router.get('/api/buses/:busNumber', requireAuth(['student', 'caretaker', 'admin']), async (req, res) => {
+router.get('/api/buses/:busNumber', requireAuth(['student', 'caretaker', 'admin']), async (req, res, next) => {
   try {
     const { busNumber } = req.params;
+    if (isNaN(Number(busNumber))) {
+      return next();
+    }
     const rows = await query(BUS_SELECT + ' WHERE b.bus_number = $1', [busNumber]);
     if (!rows.length) return res.status(404).json({ message: 'Bus not found' });
 
     const bus = rows[0];
-    if (req.auth.role === 'student' && bus.assigned_hostel !== req.auth.hostelId) {
-      return res.status(403).json({ message: 'Forbidden' });
+    const userRole = req.auth.role;
+    const userHostel = req.auth.hostelId || req.auth.hostel_id;
+    const targetHostel = bus.assignedHostel || bus.assigned_hostel;
+
+    if (userRole === 'student') {
+      if (userHostel && targetHostel && !hostelsMatch(userHostel, targetHostel)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
     }
 
     res.json(mapBus(bus));
@@ -219,26 +244,36 @@ router.post('/api/buses', requireAuth(['caretaker', 'admin']), async (req, res) 
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
+    const userHostel = req.auth.hostelId || req.auth.hostel_id;
     if (req.auth.role === 'caretaker') {
-      assignedHostel = req.auth.hostelId;
+      if (!userHostel) {
+        return res.status(403).json({ message: 'Caretaker has no assigned hostel' });
+      }
+      assignedHostel = userHostel;
     }
 
-    const existCheck = await query('SELECT bus_number FROM buses WHERE bus_number = $1', [busNumber]);
-    if (existCheck.length) return res.status(409).json({ message: 'Bus already exists' });
-
     await query(
-      'INSERT INTO buses (bus_number, assigned_hostel, latitude, longitude, route) VALUES ($1, $2, $3, $4, $5)',
+      `INSERT INTO buses (bus_number, assigned_hostel, latitude, longitude, route) 
+       VALUES ($1, $2, $3, $4, $5) 
+       ON CONFLICT (bus_number) DO UPDATE 
+       SET assigned_hostel = EXCLUDED.assigned_hostel, 
+           latitude = EXCLUDED.latitude, 
+           longitude = EXCLUDED.longitude, 
+           route = EXCLUDED.route`,
       [busNumber, assignedHostel, latitude || 0, longitude || 0, route || 'Hostel ↔ MBSE']
     );
 
     const driverId = 'drv_' + crypto.randomBytes(6).toString('hex');
     await query(
-      'INSERT INTO drivers (id, bus_number, name, phone, is_active) VALUES ($1, $2, $3, $4, $5)',
+      `INSERT INTO drivers (id, bus_number, name, phone, is_active) 
+       VALUES ($1, $2, $3, $4, $5) 
+       ON CONFLICT (bus_number) DO UPDATE 
+       SET name = EXCLUDED.name, phone = EXCLUDED.phone, is_active = EXCLUDED.is_active`,
       [driverId, busNumber, driverName, driverPhone, true]
     );
 
     const rows = await query(BUS_SELECT + ' WHERE b.bus_number = $1', [busNumber]);
-    res.json({ status: 'success', data: mapBus(rows[0]) });
+    res.status(201).json({ status: 'success', data: mapBus(rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
