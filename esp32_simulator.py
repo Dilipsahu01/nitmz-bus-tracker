@@ -2,64 +2,84 @@ import urllib.request
 import json
 import time
 import random
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 
-API_ENDPOINT = "http://localhost:3000/api/update-location"
+API_ENDPOINT = "https://nitmz-bus-tracker.onrender.com/api/update-location"
 API_KEY = "NITMZ_ESP32_SECURE_API_KEY_2026"
 CAMPUS_CENTER = (23.7271, 92.7176)
 
-def send_telemetry(lat, lng, speed, is_sos=False, status="active"):
+# List of all active bus numbers
+ALL_BUSES = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22]
+
+# Initialize random starting positions for each bus around the campus
+buses_state = {}
+for bus in ALL_BUSES:
+    buses_state[bus] = {
+        "lat": CAMPUS_CENTER[0] + random.uniform(-0.02, 0.02),
+        "lng": CAMPUS_CENTER[1] + random.uniform(-0.02, 0.02),
+        "speed": random.uniform(15.0, 40.0),
+        "is_sos": False
+    }
+
+def send_telemetry(bus_id, state):
     payload = {
-        "device_id": "ESP32-Device-SIM",
-        "bus_id": "Bus 5",
+        "device_id": f"ESP32-Device-SIM-{bus_id}",
+        "bus_id": f"{bus_id}", 
         "has_fix": True,
-        "latitude": lat,
-        "longitude": lng,
-        "speed_kmh": speed,
-        "satellites": random.randint(5, 12),
+        "latitude": state["lat"],
+        "longitude": state["lng"],
+        "speed_kmh": state["speed"],
+        "satellites": random.randint(7, 12),
         "hdop": round(random.uniform(0.8, 2.0), 1),
         "timestamp": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-        "status": status,
-        "is_sos": is_sos,
+        "status": "running",
+        "is_sos": state["is_sos"],
         "net_type": "WiFi"
     }
 
-    req = urllib.request.Request(API_ENDPOINT, method="POST")
+    req = urllib.request.Request(API_ENDPOINT)
     req.add_header('Content-Type', 'application/json')
     req.add_header('x-api-key', API_KEY)
     
     data = json.dumps(payload).encode('utf-8')
-    
     try:
-        print(f"Sending Payload: {payload}")
         with urllib.request.urlopen(req, data=data) as response:
-            res_data = response.read().decode('utf-8')
-            print(f"Server Response ({response.status}): {res_data}\n")
-    except urllib.error.URLError as e:
-        print(f"Failed to connect: {e}\n")
+            pass # Silently succeed to keep logs clean
+    except Exception as e:
+        print(f"Bus {bus_id} -> Failed: {e}")
+
+def run_simulation():
+    print("=== NIT-MZ Bus Tracker Multi-Bus Simulator ===")
+    print(f"Targeting: {API_ENDPOINT}")
+    print("Simulating", len(ALL_BUSES), "buses...\n")
+    
+    while True:
+        for bus_id, state in buses_state.items():
+            state["lat"] += random.uniform(-0.0001, 0.0001)
+            state["lng"] += random.uniform(-0.0001, 0.0001)
+            state["speed"] = random.uniform(15.0, 40.0)
+            state["is_sos"] = (random.random() < 0.01)
+
+            send_telemetry(bus_id, state)
+            
+        time.sleep(5)
+
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Simulator is running and transmitting data!")
 
 if __name__ == "__main__":
-    print("=== NIT-MZ Bus Tracker ESP32 Simulator ===")
-    print(f"Targeting: {API_ENDPOINT}\n")
-    print("Starting continuous live transmission... (Press Ctrl+C to stop)")
+    # 1. Start the continuous simulation in a background thread
+    sim_thread = threading.Thread(target=run_simulation, daemon=True)
+    sim_thread.start()
     
-    current_lat = CAMPUS_CENTER[0]
-    current_lng = CAMPUS_CENTER[1]
-    
-    step = 0
-    while True:
-        step += 1
-        # Simulate moving slightly North-East
-        current_lat += 0.0001
-        current_lng += 0.0001
-        
-        # Trigger an SOS alert every 20 seconds
-        trigger_sos = (step % 20 == 0)
-        
-        # The bus will naturally trigger the 4km Geofence deviation after ~400 steps
-        
-        print(f"\n--- Ping #{step} ---")
-        if trigger_sos:
-            print(">> SIMULATING EMERGENCY SOS BUTTON PRESS <<")
-            
-        send_telemetry(current_lat, current_lng, speed=25.0, is_sos=trigger_sos)
-        time.sleep(1) # Send every 1 second just like the real ESP32
+    # 2. Start a dummy web server to trick Render into hosting this for free
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    print(f"Dummy Web Server listening on port {port} (Required for Free Render Tier)")
+    server.serve_forever()
