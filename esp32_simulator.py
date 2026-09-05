@@ -3,7 +3,7 @@ import json
 import time
 import random
 
-API_ENDPOINT = "https://nitmz-bus-tracker.onrender.com/api/update-location"
+API_ENDPOINT = "http://localhost:3000/api/update-location"
 API_KEY = "NITMZ_ESP32_SECURE_API_KEY_2026"
 CAMPUS_CENTER = (23.7271, 92.7176)
 
@@ -40,20 +40,26 @@ def send_telemetry(lat, lng, speed, is_sos=False, status="active"):
 if __name__ == "__main__":
     print("=== NIT-MZ Bus Tracker ESP32 Simulator ===")
     print(f"Targeting: {API_ENDPOINT}\n")
+    print("Starting continuous live transmission... (Press Ctrl+C to stop)")
     
-    # 1. Normal Ping (At Campus)
-    print("--- 1. Normal Ping (At Campus) ---")
-    send_telemetry(CAMPUS_CENTER[0] + 0.001, CAMPUS_CENTER[1] + 0.001, 15.5)
-    time.sleep(2)
+    current_lat = CAMPUS_CENTER[0]
+    current_lng = CAMPUS_CENTER[1]
     
-    # 2. SOS Alert Ping
-    print("--- 2. SOS Alert Ping ---")
-    send_telemetry(CAMPUS_CENTER[0] + 0.002, CAMPUS_CENTER[1] + 0.002, 22.0, is_sos=True)
-    time.sleep(2)
-    
-    # 3. Route Deviation Ping (> 4km away)
-    # Roughly 1 degree lat is ~111km, so 0.05 degrees is ~5.5km
-    print("--- 3. Route Deviation Geofence Ping (> 4km away) ---")
-    send_telemetry(CAMPUS_CENTER[0] + 0.05, CAMPUS_CENTER[1], 45.0)
-    
-    print("Simulation Complete!")
+    step = 0
+    while True:
+        step += 1
+        # Simulate moving slightly North-East
+        current_lat += 0.0001
+        current_lng += 0.0001
+        
+        # Trigger an SOS alert every 20 seconds
+        trigger_sos = (step % 20 == 0)
+        
+        # The bus will naturally trigger the 4km Geofence deviation after ~400 steps
+        
+        print(f"\n--- Ping #{step} ---")
+        if trigger_sos:
+            print(">> SIMULATING EMERGENCY SOS BUTTON PRESS <<")
+            
+        send_telemetry(current_lat, current_lng, speed=25.0, is_sos=trigger_sos)
+        time.sleep(1) # Send every 1 second just like the real ESP32

@@ -329,17 +329,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <span class="label">Campus Fleet</span>
         </div>
 
-        <div class="bus-card" id="busCard1">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-            <div class="bus-title">Bus 1</div>
-            <div class="pill" style="padding:3px 9px;font-size:10px;">
-              <span class="dot live"></span>
-              <span>Active</span>
-            </div>
-          </div>
-          <div class="bus-sub">Main Campus Route · IoT GPS</div>
-          <button class="btn btn-white" id="trackBtn">▶ Track Live</button>
-          <div id="staleLabel">⚠ No update for <span id="staleCount">0</span>s</div>
+        <div id="busListContainer">
+          <!-- Dynamic Bus Cards injected here -->
         </div>
 
         <!-- Timings / Contact Banner -->
@@ -1300,7 +1291,8 @@ function stopTracking() {
   stopPolling();
   stopStaleTimer();
   if (S.animRaf) { cancelAnimationFrame(S.animRaf); S.animRaf = null; }
-  document.getElementById('busCard1')?.classList.remove('active');
+  const activeCards = document.querySelectorAll('.bus-card');
+  activeCards.forEach(c => c.classList.remove('active'));
   const tb = document.getElementById('trackBtn');
   if (tb) { tb.textContent = '▶ Track Live'; tb.disabled = false; }
   setConn('waiting');
@@ -1497,11 +1489,79 @@ document.addEventListener('visibilitychange', () => {
   if (t) { document.getElementById('timingsDisplay').textContent = t; document.getElementById('timingsInput').value = t; }
   if (c) { document.getElementById('contactDisplay').textContent = c; document.getElementById('contactInput').value = c; }
 
+  // Load Bus List for Sidebar
+  window.renderBusList = (buses) => {
+    const container = document.getElementById('busListContainer');
+    container.innerHTML = '';
+    buses.forEach(bus => {
+      const isSelected = (bus.busNumber === S.selectedBusId);
+      const div = document.createElement('div');
+      div.className = 'bus-card';
+      if (isSelected) div.classList.add('active');
+      div.id = `busCard-${bus.busNumber}`;
+      div.onclick = () => {
+        S.selectedBusId = bus.busNumber;
+        window.renderBusList(buses); // Re-render to move the track button
+        if (bus.schedule) {
+          const t = `${bus.schedule.fromHostelTime} - ${bus.schedule.fromMBSETime}`;
+          document.getElementById('timingsDisplay').textContent = t;
+          document.getElementById('timingsInput').value = t;
+        }
+        if (bus.driver) {
+          const c = `${bus.driver.name} (${bus.driver.phone})`;
+          document.getElementById('contactDisplay').textContent = c;
+          document.getElementById('contactInput').value = c;
+        }
+        document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${bus.status})</span>`;
+        fetchBus();
+      };
+      
+      div.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div class="bus-title">Bus ${bus.busNumber}</div>
+          <div class="pill" style="padding:3px 9px;font-size:10px;">
+            <span class="dot ${bus.status === 'running' ? 'live' : 'search'}"></span>
+            <span style="text-transform:capitalize;">${bus.status}</span>
+          </div>
+        </div>
+        <div class="bus-sub">${bus.route || 'Hostel ↔ MBSE Route'} · IoT GPS</div>
+        ${isSelected ? '<button class="btn btn-white" id="trackBtn" onclick="toggleTracking()">▶ Track Live</button>' : ''}
+        ${isSelected ? '<div id="staleLabel" style="display:none;">⚠ No update for <span id="staleCount">0</span>s</div>' : ''}
+      `;
+      container.appendChild(div);
+    });
+  };
+
+  apiFetch('/buses').then(buses => {
+    if (buses.length > 0 && !S.selectedBusId) {
+      S.selectedBusId = buses[0].busNumber;
+      document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${buses[0].status})</span>`;
+    }
+    
+    window.renderBusList(buses);
+
+    if (buses.length > 0) {
+       const initialBus = buses.find(b => b.busNumber === S.selectedBusId) || buses[0];
+       if (initialBus.schedule) {
+          document.getElementById('timingsDisplay').textContent = `${initialBus.schedule.fromHostelTime} - ${initialBus.schedule.fromMBSETime}`;
+       }
+       if (initialBus.driver) {
+          document.getElementById('contactDisplay').textContent = `${initialBus.driver.name} (${initialBus.driver.phone})`;
+       }
+    }
+  });
+
   buildHostelList();
   requestNotifPerm();
   initMobileLayout();
   toast(`Welcome, ${user.name}!`, 'white');
   
+  // Expose toggle function for dynamic buttons
+  window.toggleTracking = () => {
+    if (S.tracking) stopTracking();
+    else startTracking();
+  };
+
   initMap();
   fetchBus();
   S.pollTimer = setInterval(fetchBus, POLL_MS);

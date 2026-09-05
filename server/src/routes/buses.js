@@ -133,6 +133,51 @@ router.get('/api/all-buses', requireAuth(['student', 'caretaker', 'admin']), asy
   }
 });
 
+router.get('/api/buses/live', requireAuth(), async (req, res) => {
+  try {
+    let sql = `
+      SELECT b.bus_number, b.status, b.latitude, b.longitude, b.speed, b.route, b.assigned_hostel, b.updated_at
+      FROM buses b
+      WHERE b.is_enabled = true
+    `;
+    let params = [];
+
+    // Filter buses by hostel for students and caretakers
+    if (req.auth.role === 'student' || req.auth.role === 'caretaker') {
+      sql += ' AND b.assigned_hostel = $1';
+      params.push(req.auth.hostelId);
+    }
+
+    const rows = await query(sql, params);
+    const data = rows.map(r => {
+      // Backend Fallback ETA Engine (straight-line to Campus Center)
+      const dist = haversine(Number(r.latitude), Number(r.longitude), 23.7271, 92.7176);
+      const speedMs = Number(r.speed) * (1000 / 3600);
+      const eta = (speedMs > 0.5) ? Math.round(dist / speedMs) : null;
+
+      return {
+        busNumber: r.bus_number,
+        status: r.status,
+        lat: Number(r.latitude),
+        lng: Number(r.longitude),
+        speed: Number(r.speed),
+        route: r.route,
+        hostel: r.assigned_hostel,
+        updatedAt: r.updated_at,
+        etaSeconds: eta,
+        // Mock diagnostics since they aren't on the bus table directly
+        hasFix: r.status !== 'maintenance',
+        satellites: r.status === 'running' ? 8 : 0,
+        hdop: 1.2,
+        netType: 'API'
+      };
+    });
+    res.json({ status: 'success', data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/api/buses/:busNumber', requireAuth(['student', 'caretaker', 'admin']), async (req, res) => {
   try {
     const { busNumber } = req.params;
@@ -263,43 +308,6 @@ router.patch('/api/buses/:busNumber/driver', requireAuth(['caretaker', 'admin'])
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
-  }
-});
-
-router.get('/api/buses/live', requireAuth(), async (req, res) => {
-  try {
-    const sql = `
-      SELECT b.bus_number, b.status, b.latitude, b.longitude, b.speed, b.route, b.assigned_hostel, b.updated_at
-      FROM buses b
-      WHERE b.is_enabled = true
-    `;
-    const rows = await query(sql);
-    const data = rows.map(r => {
-      // Backend Fallback ETA Engine (straight-line to Campus Center)
-      const dist = haversine(Number(r.latitude), Number(r.longitude), 23.7271, 92.7176);
-      const speedMs = Number(r.speed) * (1000 / 3600);
-      const eta = (speedMs > 0.5) ? Math.round(dist / speedMs) : null;
-
-      return {
-        busNumber: r.bus_number,
-        status: r.status,
-        lat: Number(r.latitude),
-        lng: Number(r.longitude),
-        speed: Number(r.speed),
-        route: r.route,
-        hostel: r.assigned_hostel,
-        updatedAt: r.updated_at,
-        etaSeconds: eta,
-        // Mock diagnostics since they aren't on the bus table directly
-        hasFix: r.status !== 'maintenance',
-        satellites: r.status === 'running' ? 8 : 0,
-        hdop: 1.2,
-        netType: 'API'
-      };
-    });
-    res.json({ status: 'success', data });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
