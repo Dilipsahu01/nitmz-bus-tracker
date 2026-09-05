@@ -136,8 +136,17 @@ router.get('/api/all-buses', requireAuth(['student', 'caretaker', 'admin']), asy
 router.get('/api/buses/live', requireAuth(), async (req, res) => {
   try {
     let sql = `
-      SELECT b.bus_number, b.status, b.latitude, b.longitude, b.speed, b.route, b.assigned_hostel, b.updated_at
+      SELECT 
+        b.bus_number, b.status, b.latitude, b.longitude, b.speed, b.route, b.assigned_hostel, b.updated_at,
+        t.satellites, t.hdop, t.net_type, t.has_fix
       FROM buses b
+      LEFT JOIN LATERAL (
+        SELECT satellites, hdop, net_type, has_fix 
+        FROM telemetry 
+        WHERE bus_id::varchar = b.bus_number::varchar OR bus_id::varchar = 'Bus ' || b.bus_number
+        ORDER BY ts DESC NULLS LAST, id DESC
+        LIMIT 1
+      ) t ON true
       WHERE b.is_enabled = true
     `;
     let params = [];
@@ -155,8 +164,8 @@ router.get('/api/buses/live', requireAuth(), async (req, res) => {
       const speedMs = Number(r.speed) * (1000 / 3600);
       const eta = (speedMs > 0.5) ? Math.round(dist / speedMs) : null;
 
-      return {
-        busNumber: r.bus_number,
+      let busData = {
+        busNumber: parseInt(r.bus_number, 10),
         status: r.status,
         lat: Number(r.latitude),
         lng: Number(r.longitude),
@@ -164,13 +173,20 @@ router.get('/api/buses/live', requireAuth(), async (req, res) => {
         route: r.route,
         hostel: r.assigned_hostel,
         updatedAt: r.updated_at,
-        etaSeconds: eta,
-        // Mock diagnostics since they aren't on the bus table directly
-        hasFix: r.status !== 'maintenance',
-        satellites: r.status === 'running' ? 8 : 0,
-        hdop: 1.2,
-        netType: 'API'
+        etaSeconds: eta
       };
+
+      // Only attach hardware diagnostics if the user has clearance
+      if (req.auth.role === 'caretaker' || req.auth.role === 'admin') {
+        busData.hasFix = r.has_fix !== null ? r.has_fix : (r.status !== 'maintenance');
+        busData.satellites = r.satellites || 0;
+        busData.hdop = r.hdop || 99.9;
+        busData.netType = r.net_type || 'Unknown';
+      } else {
+        busData.hasFix = r.status !== 'maintenance';
+      }
+
+      return busData;
     });
     res.json({ status: 'success', data });
   } catch (error) {

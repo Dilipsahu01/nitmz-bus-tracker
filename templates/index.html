@@ -195,6 +195,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 /* ===== BUS MARKER ===== */
 .bus-root{width:46px;height:46px;position:relative;display:flex;align-items:center;justify-content:center;}
+.bus-root.offline{filter:grayscale(100%);opacity:0.6;}
 .bus-pulse{position:absolute;inset:-10px;border-radius:50%;background:var(--white);opacity:0;}
 .bus-pulse.on{animation:bpulse 1.8s ease-out infinite;}
 @keyframes bpulse{0%{transform:scale(.5);opacity:.5}100%{transform:scale(2);opacity:0}}
@@ -715,7 +716,7 @@ function initMap() {
   S.mapReady = true;
 }
 
-function buildBusIcon(deg) {
+function buildBusIcon(deg, busId) {
   return L.divIcon({
     className: '',
     html: `
@@ -726,6 +727,7 @@ function buildBusIcon(deg) {
           <circle cx="22" cy="22" r="22" fill="none" stroke="rgba(0,0,0,0.15)" stroke-width="2"/>
           <polygon points="22,7 29,30 22,25 15,30" fill="#0a0a0a"/>
         </svg>
+        <div style="position:absolute; top:-2px; right:-2px; background:var(--surface); color:var(--text); font-family:var(--ui); font-size:10px; font-weight:700; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:1px solid var(--border3); z-index:3; box-shadow:0 2px 5px rgba(0,0,0,0.5);">${busId}</div>
       </div>`,
     iconSize: [46,46], iconAnchor: [23,23]
   });
@@ -754,7 +756,7 @@ function setPulse(busId, moving) {
 function animateBusTo(busId, lat, lng) {
   const marker = busMarkers.get(busId);
   if (!marker) {
-    const icon = buildBusIcon(0);
+    const icon = buildBusIcon(0, busId);
     const newMarker = L.marker([lat, lng], { icon }).addTo(map);
     busMarkers.set(busId, newMarker);
     if (busId === S.selectedBusId && S.followMode) {
@@ -1160,6 +1162,14 @@ function startStaleTimer() {
     document.getElementById('stalePill').style.display = isStale ? 'inline' : 'none';
     document.getElementById('staleWarning').style.display = isStale ? 'block' : 'none';
     document.getElementById('staleCountRp').textContent = secs;
+    
+    // Toggle marker offline state
+    const marker = busMarkers.get(S.selectedBusId);
+    const root = marker && marker.getElement() && marker.getElement().querySelector('.bus-root');
+    if (root) {
+      if (isStale) root.classList.add('offline');
+      else root.classList.remove('offline');
+    }
   }, 1000);
 }
 
@@ -1184,6 +1194,11 @@ function onBusData(busId, data, status) {
   const lat    = parseFloat(data.latitude);
   const lng    = parseFloat(data.longitude);
   const moving = hasFix && speed > 2;
+
+  // Clear offline state on new data
+  const marker = busMarkers.get(busId);
+  const root = marker && marker.getElement() && marker.getElement().querySelector('.bus-root');
+  if (root) root.classList.remove('offline');
 
   if (isSelected) {
     setConn(hasFix ? 'live' : 'searching');
@@ -1225,8 +1240,8 @@ function onBusData(busId, data, status) {
     updateSignalQuality(hdop, data.satellites);
     document.getElementById('dSat').textContent = data.satellites ?? '--';
 
-    // Admin fields
-    if (S.role === 'admin') {
+    // Admin / Caretaker diagnostic fields
+    if (S.role === 'admin' || S.role === 'caretaker') {
       document.getElementById('dLat').textContent  = (hasFix && lat) ? lat.toFixed(6) : '--';
       document.getElementById('dLng').textContent  = (hasFix && lng) ? lng.toFixed(6) : '--';
       document.getElementById('dHdop').textContent = hdop != null ? hdop.toFixed(1) : '--';
@@ -1269,11 +1284,23 @@ document.getElementById('trackBtn').addEventListener('click', () => {
 
 function startTracking() {
   if (S.tracking) return;
+  if (!S.selectedBusId) return;
   S.tracking = true;
-  document.getElementById('busCard1').classList.add('active');
+  
+  const card = document.getElementById(`busCard-${S.selectedBusId}`);
+  if (card) card.classList.add('active');
+  
   const tb = document.getElementById('trackBtn');
-  tb.textContent = '⏸ Stop Tracking';
-  tb.disabled = false; // keep enabled so user can stop
+  if (tb) {
+    tb.textContent = '⏸ Stop Tracking';
+    tb.disabled = false;
+  }
+  
+  const mtb = document.getElementById('mbsTrack');
+  if (mtb) {
+    mtb.textContent = '⏸ Stop';
+    mtb.classList.add('active');
+  }
 
   requestAnimationFrame(() => requestAnimationFrame(() => {
     initMap();
@@ -1291,12 +1318,19 @@ function stopTracking() {
   stopPolling();
   stopStaleTimer();
   if (S.animRaf) { cancelAnimationFrame(S.animRaf); S.animRaf = null; }
+  
   const activeCards = document.querySelectorAll('.bus-card');
   activeCards.forEach(c => c.classList.remove('active'));
+  
   const tb = document.getElementById('trackBtn');
   if (tb) { tb.textContent = '▶ Track Live'; tb.disabled = false; }
+  
+  const mtb = document.getElementById('mbsTrack');
+  if (mtb) { mtb.textContent = '▶ Track'; mtb.classList.remove('active'); }
+  
   setConn('waiting');
-  document.getElementById('staleLabel').style.display = 'none';
+  const sl = document.getElementById('staleLabel');
+  if (sl) sl.style.display = 'none';
   document.getElementById('stalePill').style.display = 'none';
   document.getElementById('staleWarning').style.display = 'none';
   updateETAList();
@@ -1363,9 +1397,7 @@ document.getElementById('mbsRight')?.addEventListener('click', () => {
   document.getElementById('toggleRight').click();
 });
 document.getElementById('mbsTrack')?.addEventListener('click', () => {
-  if (!S.tracking) startTracking(); else stopTracking();
-  document.getElementById('mbsTrack').textContent = S.tracking ? '⏸ Stop' : '▶ Track';
-  document.getElementById('mbsTrack').classList.toggle('active', S.tracking);
+  window.toggleTracking();
 });
 
 function initMobileLayout() {
@@ -1389,55 +1421,113 @@ window.addEventListener('resize', () => {
 /* ================================================================
    ADMIN SETTINGS SAVE
 ================================================================ */
-document.getElementById('saveSettings')?.addEventListener('click', () => {
+document.getElementById('saveSettings')?.addEventListener('click', async () => {
+  if (!S.selectedBusId) { toast('Select a bus first', 'amber'); return; }
+  
   const t = document.getElementById('timingsInput').value.trim();
   const c = document.getElementById('contactInput').value.trim();
-  if (t) { LS.set('nitmz_timings',t); document.getElementById('timingsDisplay').textContent=t; }
-  if (c) { LS.set('nitmz_contact',c); document.getElementById('contactDisplay').textContent=c; }
+  
   const btn = document.getElementById('saveSettings');
   const orig = btn.textContent;
-  btn.textContent = '✓ Saved'; btn.disabled = true;
+  btn.textContent = 'Saving...'; 
+  btn.disabled = true;
+  
+  try {
+    if (t) {
+      let fromH = t, fromM = t;
+      if (t.includes('-')) { const p = t.split('-'); fromH = p[0].trim(); fromM = p[1].trim(); }
+      else if (t.includes(',')) { const p = t.split(','); fromH = p[0].trim(); fromM = p[1].trim(); }
+      
+      await apiFetch('/schedules', 'POST', {
+        busNumber: S.selectedBusId,
+        fromHostelTime: fromH,
+        fromMBSETime: fromM
+      });
+      document.getElementById('timingsDisplay').textContent = `${fromH} - ${fromM}`;
+    }
+    
+    if (c) {
+      // Split name and phone if provided like "Name (Phone)" or "Name - Phone"
+      let dName = c, dPhone = '000';
+      if (c.includes('(') && c.includes(')')) {
+        const m = c.match(/(.+)\((.+)\)/);
+        if (m) { dName = m[1].trim(); dPhone = m[2].trim(); }
+      } else if (c.includes('-')) {
+        const p = c.split('-'); dName = p[0].trim(); dPhone = p[1].trim();
+      }
+      
+      await apiFetch(`/buses/${S.selectedBusId}/driver`, 'PATCH', {
+        name: dName,
+        phone: dPhone
+      });
+      document.getElementById('contactDisplay').textContent = `${dName} (${dPhone})`;
+    }
+    
+    btn.textContent = '✓ Saved';
+    toast('Settings saved successfully', 'green');
+    
+    // Refresh bus list to pull latest data
+    apiFetch('/buses').then(buses => window.renderBusList(buses));
+    
+  } catch (err) {
+    btn.textContent = 'Error!';
+    toast('Failed to save settings: ' + err.message, 'red');
+  }
+  
   setTimeout(()=>{ btn.textContent = orig; btn.disabled = false; }, 2000);
-  toast('Settings saved', 'green');
 });
 
 /* ================================================================
-   POLLING
+/* ================================================================
+   SSE STREAMING
 ================================================================ */
+let sseSource = null;
+
 function startPolling() {
-  if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; }
   if (S.etaTimer)  { clearInterval(S.etaTimer);  S.etaTimer  = null; }
-  fetchBus();
-  S.pollTimer = setInterval(fetchBus, POLL_MS);
   S.etaTimer  = setInterval(updateETAList, 1000);
-}
 
-function stopPolling() {
-  clearInterval(S.pollTimer); S.pollTimer = null;
-  clearInterval(S.etaTimer);  S.etaTimer  = null;
-}
+  if (sseSource) return;
 
-function fetchBus() {
-  apiFetch('/buses/live')
-    .then(json => {
-      const buses = json.data || [];
+  const token = localStorage.getItem('jwt_token') || '';
+  sseSource = new EventSource(`/api/buses/stream?token=${token}`);
+
+  sseSource.onmessage = (event) => {
+    try {
+      const buses = JSON.parse(event.data) || [];
       buses.forEach(b => {
         const mapped = {
           latitude: b.lat, longitude: b.lng, speed_kmh: b.speed,
-          has_fix: b.hasFix, satellites: b.satellites, hdop: b.hdop, net_type: b.netType
+          has_fix: b.has_fix !== undefined ? b.has_fix : b.hasFix, 
+          satellites: b.satellites, hdop: b.hdop, net_type: b.net_type || b.netType
         };
-        onBusData(b.busNumber, mapped, b.status);
+        const busNum = b.bus_number !== undefined ? b.bus_number : b.busNumber;
+        onBusData(busNum, mapped, b.status);
       });
       if (!S.selectedBusId && buses.length > 0) {
-        // auto-select first bus just so the UI isn't empty
-        S.selectedBusId = buses[0].busNumber;
+        const busNum = buses[0].bus_number !== undefined ? buses[0].bus_number : buses[0].busNumber;
+        S.selectedBusId = busNum;
         document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${buses[0].status})</span>`;
       }
-    })
-    .catch(() => {
-      setConn('offline');
-      updateStatusBig(false, false);
-    });
+    } catch (e) { console.error('SSE Error', e); }
+  };
+
+  sseSource.onerror = () => {
+    setConn('offline');
+    updateStatusBig(false, false);
+    sseSource.close();
+    sseSource = null;
+    // SSE auto-reconnects natively, but we ensure our state is clean
+    setTimeout(startPolling, 3000);
+  };
+}
+
+function stopPolling() {
+  if (S.etaTimer)  { clearInterval(S.etaTimer);  S.etaTimer  = null; }
+  if (sseSource) {
+    sseSource.close();
+    sseSource = null;
+  }
 }
 
 /* ================================================================
@@ -1483,53 +1573,88 @@ document.addEventListener('visibilitychange', () => {
     document.getElementById('adminJson').style.display = 'none';
   }
   
-  // Restore saved bus info
-  const t = LS.get('nitmz_timings') || '';
-  const c = LS.get('nitmz_contact') || '';
-  if (t) { document.getElementById('timingsDisplay').textContent = t; document.getElementById('timingsInput').value = t; }
-  if (c) { document.getElementById('contactDisplay').textContent = c; document.getElementById('contactInput').value = c; }
+  // Restore logic removed: timings now dynamically populate from the selected bus from the DB.
 
   // Load Bus List for Sidebar
-  window.renderBusList = (buses) => {
-    const container = document.getElementById('busListContainer');
-    container.innerHTML = '';
+  window.updateBusSelectionUI = (buses) => {
+    // Re-evaluate button state based on S.tracking
+    let btnText = S.tracking ? '⏹ Stop Tracking' : '▶ Track Live';
+    
     buses.forEach(bus => {
       const isSelected = (bus.busNumber === S.selectedBusId);
-      const div = document.createElement('div');
-      div.className = 'bus-card';
-      if (isSelected) div.classList.add('active');
-      div.id = `busCard-${bus.busNumber}`;
-      div.onclick = () => {
-        S.selectedBusId = bus.busNumber;
-        window.renderBusList(buses); // Re-render to move the track button
-        if (bus.schedule) {
-          const t = `${bus.schedule.fromHostelTime} - ${bus.schedule.fromMBSETime}`;
-          document.getElementById('timingsDisplay').textContent = t;
-          document.getElementById('timingsInput').value = t;
-        }
-        if (bus.driver) {
-          const c = `${bus.driver.name} (${bus.driver.phone})`;
-          document.getElementById('contactDisplay').textContent = c;
-          document.getElementById('contactInput').value = c;
-        }
-        document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${bus.status})</span>`;
-        fetchBus();
-      };
+      const card = document.getElementById(`busCard-${bus.busNumber}`);
+      if (!card) return;
       
-      div.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <div class="bus-title">Bus ${bus.busNumber}</div>
-          <div class="pill" style="padding:3px 9px;font-size:10px;">
-            <span class="dot ${bus.status === 'running' ? 'live' : 'search'}"></span>
-            <span style="text-transform:capitalize;">${bus.status}</span>
-          </div>
-        </div>
-        <div class="bus-sub">${bus.route || 'Hostel ↔ MBSE Route'} · IoT GPS</div>
-        ${isSelected ? '<button class="btn btn-white" id="trackBtn" onclick="toggleTracking()">▶ Track Live</button>' : ''}
-        ${isSelected ? '<div id="staleLabel" style="display:none;">⚠ No update for <span id="staleCount">0</span>s</div>' : ''}
-      `;
-      container.appendChild(div);
+      const actionsDiv = document.getElementById(`busActions-${bus.busNumber}`);
+      
+      if (isSelected) {
+        card.classList.add('active');
+        actionsDiv.innerHTML = `
+          <button class="btn btn-white" id="trackBtn" onclick="toggleTracking()">${btnText}</button>
+          <div id="staleLabel" style="display:none;">⚠ No update for <span id="staleCount">0</span>s</div>
+        `;
+      } else {
+        card.classList.remove('active');
+        actionsDiv.innerHTML = '';
+      }
     });
+  };
+
+  window.renderBusList = (buses) => {
+    const container = document.getElementById('busListContainer');
+    // Only build DOM once to prevent scroll jumping
+    if (container.children.length === 0) {
+      buses.forEach(bus => {
+        const div = document.createElement('div');
+        div.className = 'bus-card';
+        div.id = `busCard-${bus.busNumber}`;
+        div.onclick = () => {
+          if (S.selectedBusId === bus.busNumber) return; // Ignore if already selected
+          
+          // Stop tracking if switching buses to prevent state corruption
+          if (S.tracking) window.toggleTracking();
+          
+          S.selectedBusId = bus.busNumber;
+          S.lastRouteOrigin = null; // Force route recalculation from new bus
+          window.updateBusSelectionUI(buses);
+          
+          if (bus.schedule) {
+            const t = `${bus.schedule.fromHostelTime} - ${bus.schedule.fromMBSETime}`;
+            document.getElementById('timingsDisplay').textContent = t;
+            document.getElementById('timingsInput').value = t;
+          }
+          if (bus.driver) {
+            const c = `${bus.driver.name} (${bus.driver.phone})`;
+            document.getElementById('contactDisplay').textContent = c;
+            document.getElementById('contactInput').value = c;
+          }
+          document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${bus.status})</span>`;
+          fetchBus(); // Fetch immediately to update UI
+
+          // Auto-collapse mobile sidebar on selection
+          if (window.innerWidth <= 640) {
+            document.getElementById('sidebar').classList.remove('mobile-open');
+            document.getElementById('mobileOverlay').classList.remove('on');
+            document.getElementById('toggleLeft').classList.remove('active');
+          }
+        };
+        
+        div.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <div class="bus-title">Bus ${bus.busNumber}</div>
+            <div class="pill" style="padding:3px 9px;font-size:10px;">
+              <span class="dot ${bus.status === 'running' ? 'live' : 'search'}"></span>
+              <span style="text-transform:capitalize;">${bus.status}</span>
+            </div>
+          </div>
+          <div class="bus-sub">${bus.route || 'Hostel ↔ MBSE Route'} · IoT GPS</div>
+          <div id="busActions-${bus.busNumber}" class="bus-actions"></div>
+        `;
+        container.appendChild(div);
+      });
+    }
+    
+    window.updateBusSelectionUI(buses);
   };
 
   apiFetch('/buses').then(buses => {
@@ -1563,8 +1688,7 @@ document.addEventListener('visibilitychange', () => {
   };
 
   initMap();
-  fetchBus();
-  S.pollTimer = setInterval(fetchBus, POLL_MS);
+  startPolling(); // Starts SSE
 })();
 </script>
 </body>

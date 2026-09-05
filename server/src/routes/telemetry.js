@@ -44,6 +44,46 @@ function normalizeTelemetry(body) {
   };
 }
 
+const { redisClient, redisSub } = require('../redis');
+const EventEmitter = require('events');
+
+// Bridge Redis Pub/Sub to Local EventEmitter for SSE efficiency
+const telemetryEmitter = new EventEmitter();
+telemetryEmitter.setMaxListeners(0);
+
+let busHostelMapping = {};
+async function updateBusHostelMapping() {
+  try {
+    const buses = await query('SELECT bus_number, hostel_id FROM buses');
+    for (const b of buses) {
+      busHostelMapping[b.bus_number] = b.hostel_id;
+    }
+  } catch (err) {
+    console.error('Failed to update busHostelMapping:', err.message);
+  }
+}
+updateBusHostelMapping();
+setInterval(updateBusHostelMapping, 60000); // Refresh every minute
+
+(async () => {
+  try {
+    // Wait slightly to ensure connection is established by redis.js
+    setTimeout(async () => {
+      if (redisSub.isOpen) {
+        await redisSub.subscribe('live_update', (message) => {
+          try {
+            const cacheEntry = JSON.parse(message);
+            telemetryEmitter.emit('live_update', cacheEntry);
+          } catch(e) {}
+        });
+        console.log('✅ Subscribed to Redis live_update channel');
+      }
+    }, 1000);
+  } catch (err) {
+    console.error('Failed to subscribe to redis pubsub', err);
+  }
+})();
+
 // ─── POST /api/update-location ──────────────────────────────────
 // Secure ESP32 / simulator telemetry ingestion (x-api-key required)
 // Accepts BOTH ESP32 native format and app webhook format
@@ -54,48 +94,48 @@ router.post('/api/update-location', requireApiKey(), async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'lat/latitude and lng/longitude are required' });
     }
 
-    // Insert full telemetry row with diagnostics
-    await query(
-      `INSERT INTO telemetry (device_id, bus_id, lat, lng, speed, accuracy, has_fix, satellites, hdop, net_type, ts, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [d.device_id, d.bus_id, d.lat, d.lng, d.speed, d.accuracy, d.has_fix, d.satellites, d.hdop, d.net_type, d.ts, d.status]
-    );
-
-    // Update live bus position and updated_at
     const parsedBusNumber = Number(String(d.bus_id || '').replace(/[^0-9]/g, ''));
-    if (parsedBusNumber) {
-      await query(
-        `UPDATE buses SET latitude = $1, longitude = $2, speed = $3, status = COALESCE($4, status), updated_at = NOW() WHERE bus_number = $5`,
-        [d.lat, d.lng, d.speed, d.status === 'active' ? 'running' : d.status, parsedBusNumber]
-      );
+    if (!parsedBusNumber) return res.status(400).json({ error: 'invalid bus id' });
 
-      // Feature: SOS Alert
-      if (d.is_sos) {
+    // Store in Redis Hot Cache
+    const cacheEntry = {
+      ...d,
+      bus_number: parsedBusNumber,
+      ts: new Date().toISOString()
+    };
+    await redisClient.hSet('hotCache', String(parsedBusNumber), JSON.stringify(cacheEntry));
+    await redisClient.rPush('telemetryQueue', JSON.stringify(cacheEntry));
+
+    // Broadcast instantly to all Node.js instances via Redis Pub/Sub
+    await redisClient.publish('live_update', JSON.stringify(cacheEntry));
+
+    // SOS Alerts are rare, so we can DB query them immediately
+    if (d.is_sos) {
+      const nId = 'n_' + crypto.randomBytes(6).toString('hex');
+      await query(
+        `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
+        [nId, 'SOS ALERT', `Emergency SOS triggered on Bus ${parsedBusNumber}!`, 'alert', parsedBusNumber, 'system']
+      );
+    }
+
+    // Geofence checking is also relatively cheap if done selectively or in background, 
+    // but we'll do it immediately for safety
+    const distFromCampus = haversine(d.lat, d.lng, 23.7271, 92.7176);
+    if (distFromCampus > 4000) { // 4km boundary
+      const recent = await query(
+        `SELECT id FROM notifications WHERE type = 'warning' AND bus_number = $1 AND sent_at > NOW() - INTERVAL '15 minutes'`, 
+        [parsedBusNumber]
+      );
+      if (recent.length === 0) {
         const nId = 'n_' + crypto.randomBytes(6).toString('hex');
         await query(
           `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
-          [nId, 'SOS ALERT', `Emergency SOS triggered on Bus ${parsedBusNumber}!`, 'alert', parsedBusNumber, 'system']
+          [nId, 'Geofence Alert', `Bus ${parsedBusNumber} has left the 4km campus boundary.`, 'warning', parsedBusNumber, 'system']
         );
-      }
-
-      // Feature: Route Deviation / Geofence
-      const distFromCampus = haversine(d.lat, d.lng, 23.7271, 92.7176);
-      if (distFromCampus > 4000) { // 4km boundary
-        const recent = await query(
-          `SELECT id FROM notifications WHERE type = 'warning' AND bus_number = $1 AND sent_at > NOW() - INTERVAL '15 minutes'`, 
-          [parsedBusNumber]
-        );
-        if (recent.length === 0) {
-          const nId = 'n_' + crypto.randomBytes(6).toString('hex');
-          await query(
-            `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
-            [nId, 'Geofence Alert', `Bus ${parsedBusNumber} has left the 4km campus boundary.`, 'warning', parsedBusNumber, 'system']
-          );
-        }
       }
     }
 
-    res.json({ message: 'Data received successfully', status: 'success' });
+    res.json({ message: 'Hot Path ingest success', status: 'success' });
   } catch (err) {
     console.error('[telemetry] POST /api/update-location error:', err.message);
     res.status(500).json({ status: 'error', message: 'Server error' });
@@ -104,7 +144,6 @@ router.post('/api/update-location', requireApiKey(), async (req, res) => {
 
 // ─── POST /endpoint ─────────────────────────────────────────────
 // Legacy ESP32 firmware endpoint (x-api-key required)
-// The actual ESP32 .ino firmware POSTs to /endpoint
 router.post('/endpoint', requireApiKey(), async (req, res) => {
   try {
     const d = normalizeTelemetry(req.body);
@@ -112,25 +151,85 @@ router.post('/endpoint', requireApiKey(), async (req, res) => {
       return res.status(400).json({ status: 'error' });
     }
 
-    await query(
-      `INSERT INTO telemetry (device_id, bus_id, lat, lng, speed, accuracy, has_fix, satellites, hdop, net_type, ts, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [d.device_id || 'ESP32-Device-1', d.bus_id, d.lat, d.lng, d.speed, d.accuracy, d.has_fix, d.satellites, d.hdop, d.net_type, d.ts, d.status]
-    );
-
-    // Update bus 5 by default (the ESP32 is mounted on bus 5)
     const busNum = Number(String(d.bus_id || '5').replace(/[^0-9]/g, '')) || 5;
-    const busStatus = d.has_fix && d.speed > 2 ? 'running' : (d.has_fix ? 'idle' : 'idle');
-    await query(
-      `UPDATE buses SET latitude = $1, longitude = $2, speed = $3, status = $4 WHERE bus_number = $5`,
-      [d.lat, d.lng, d.speed, busStatus, busNum]
-    );
+    
+    // Store in Redis Hot Cache
+    const cacheEntry = {
+      ...d,
+      bus_number: busNum,
+      device_id: d.device_id || 'ESP32-Device-1',
+      ts: new Date().toISOString()
+    };
+    await redisClient.hSet('hotCache', String(busNum), JSON.stringify(cacheEntry));
+    await redisClient.rPush('telemetryQueue', JSON.stringify(cacheEntry));
+
+    // Broadcast instantly to all Node.js instances via Redis Pub/Sub
+    await redisClient.publish('live_update', JSON.stringify(cacheEntry));
 
     res.json({ status: 'success' });
   } catch (err) {
     console.error('[telemetry] POST /endpoint error:', err.message);
     res.status(500).json({ status: 'error' });
   }
+});
+
+// --- HOT PATH: SSE Broadcast to Clients ---
+router.get('/api/buses/stream', requireAuth(), async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  
+  // Send current Redis state immediately
+  try {
+    const allData = await redisClient.hGetAll('hotCache');
+    let initialData = Object.values(allData).map(val => JSON.parse(val));
+    
+    // Filter initial data for RBAC
+    const isGlobalViewer = req.auth.role === 'admin' || req.auth.role === 'caretaker';
+    if (!isGlobalViewer) {
+      initialData = initialData.filter(d => req.auth.hostelId === busHostelMapping[d.bus_number]);
+      initialData = initialData.map(d => {
+        const { satellites, hdop, net_type, ...cleanData } = d;
+        return cleanData;
+      });
+    }
+
+    res.write(`data: ${JSON.stringify(initialData)}\n\n`);
+  } catch (err) {
+    console.error('Failed to get initial redis state', err);
+  }
+
+  // Stream future updates
+  const onUpdate = (data) => {
+    // RBAC: strict hostel scoping
+    const isGlobalViewer = req.auth.role === 'admin' || req.auth.role === 'caretaker';
+    if (!isGlobalViewer && req.auth.hostelId !== busHostelMapping[data.bus_number]) {
+      return; // Skip data not belonging to student's hostel
+    }
+
+    // Network backpressure check
+    if (!res.writable) {
+      req.destroy();
+      return;
+    }
+
+    let chunk;
+    // Strip hardware diagnostics for students
+    if (req.auth.role === 'student') {
+      const { satellites, hdop, net_type, ...cleanData } = data;
+      chunk = `data: ${JSON.stringify([cleanData])}\n\n`;
+    } else {
+      chunk = `data: ${JSON.stringify([data])}\n\n`;
+    }
+
+    const writeSuccess = res.write(chunk);
+    if (!writeSuccess) {
+      req.destroy();
+    }
+  };
+  
+  telemetryEmitter.on('live_update', onUpdate);
+  req.on('close', () => telemetryEmitter.removeListener('live_update', onUpdate));
 });
 
 // ─── GET /api/location/latest ───────────────────────────────────
@@ -269,3 +368,64 @@ router.get('/api/telemetry/history', requireAuth(['caretaker', 'admin']), async 
 });
 
 module.exports = router;
+
+// --- COLD PATH: Background DB Sync ---
+let isSyncing = false;
+setInterval(async () => {
+  if (isSyncing) return;
+  isSyncing = true;
+  try {
+    const queueItems = await redisClient.lRange('telemetryQueue', 0, -1);
+    if (!queueItems || queueItems.length === 0) return;
+    
+    const parsedItems = queueItems.map(item => JSON.parse(item));
+    const len = parsedItems.length;
+
+    const deviceIds = [], busIds = [], lats = [], lngs = [], speeds = [], accuracies = [], hasFixes = [], satellites = [], hdops = [], netTypes = [], tss = [], statuses = [];
+    const busNumbers = [], updateLats = [], updateLngs = [], updateSpeeds = [], updateStatuses = [];
+
+    for (const d of parsedItems) {
+      deviceIds.push(d.device_id);
+      busIds.push(String(d.bus_id || d.bus_number));
+      lats.push(d.lat);
+      lngs.push(d.lng);
+      speeds.push(d.speed || 0);
+      accuracies.push(d.accuracy || 1.0);
+      hasFixes.push(d.has_fix || false);
+      satellites.push(d.satellites || 0);
+      hdops.push(d.hdop || 99.9);
+      netTypes.push(d.net_type || 'unknown');
+      tss.push(d.ts || new Date().toISOString());
+      statuses.push(d.status || 'idle');
+
+      busNumbers.push(d.bus_number);
+      updateLats.push(d.lat);
+      updateLngs.push(d.lng);
+      updateSpeeds.push(d.speed || 0);
+      updateStatuses.push(d.status === 'active' ? 'running' : (d.status || 'idle'));
+    }
+
+    // 1. Bulk Insert historical telemetry
+    await query(
+      `INSERT INTO telemetry (device_id, bus_id, lat, lng, speed, accuracy, has_fix, satellites, hdop, net_type, ts, status)
+       SELECT * FROM UNNEST($1::text[], $2::text[], $3::numeric[], $4::numeric[], $5::numeric[], $6::numeric[], $7::boolean[], $8::int[], $9::numeric[], $10::text[], $11::timestamp[], $12::text[])`,
+      [deviceIds, busIds, lats, lngs, speeds, accuracies, hasFixes, satellites, hdops, netTypes, tss, statuses]
+    );
+
+    // 2. Bulk Update canonical buses table
+    await query(
+      `UPDATE buses AS b
+       SET latitude = u.lat, longitude = u.lng, speed = u.speed, status = COALESCE(u.status, b.status), updated_at = NOW()
+       FROM UNNEST($1::int[], $2::numeric[], $3::numeric[], $4::numeric[], $5::text[]) AS u(bus_number, lat, lng, speed, status)
+       WHERE b.bus_number = u.bus_number`,
+      [busNumbers, updateLats, updateLngs, updateSpeeds, updateStatuses]
+    );
+
+    // Safely clear only the processed records
+    await redisClient.lTrim('telemetryQueue', len, -1);
+  } catch (err) {
+    console.error('[Cold Path] Error syncing to DB from Redis:', err.message);
+  } finally {
+    isSyncing = false;
+  }
+}, 30000); // Runs every 30 seconds
