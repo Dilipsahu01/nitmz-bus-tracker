@@ -29,11 +29,11 @@ const char gprsPass[] = "";
 // ============================================================
 // SERVER CONFIGURATION
 // ============================================================
-const char* apiEndpoint = "https://nitmz-bus-tracker.onrender.com/endpoint";
+const char* apiEndpoint = "https://nitmz-bus-tracker.onrender.com/api/update-location";
 const char  server[]    = "nitmz-bus-tracker.onrender.com";
 const int   port        = 443;
-const char  path[]      = "/endpoint";
-const char* secretKey   = "NITMZ_Bus_Super_Secret_2026!";
+const char  path[]      = "/api/update-location";
+const char* secretKey   = "NITMZ_ESP32_SECURE_API_KEY_2026";
 
 // ============================================================
 // HARDWARE PINS

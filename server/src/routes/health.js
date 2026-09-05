@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const { query } = require('../db');
 
-router.get('/', (req, res) => {
+router.get('/api', (req, res) => {
   res.json({ status: 'ok', message: 'Campus Bus Tracker API running' });
 });
 

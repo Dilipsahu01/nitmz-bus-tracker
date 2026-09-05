@@ -35,11 +35,9 @@ const Auth = {
       return data.user;
     } catch (e) {
       throw e;
-    }
-  },
-  register: async (name, email, password) => {
+  register: async (name, email, password, hostelId) => {
     try {
-      const data = await apiFetch('/auth/register', 'POST', { name, email, password, role: 'student' });
+      const data = await apiFetch('/auth/register', 'POST', { name, email, password, role: 'student', hostelId });
       localStorage.setItem('jwt_token', data.token);
       localStorage.setItem('user_info', JSON.stringify(data.user));
       return data.user;

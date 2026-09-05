@@ -54,6 +54,12 @@
             <input type="email" id="rEmail" class="lf" placeholder="student@nitmz.ac.in" required>
           </div>
           <div class="fl">
+            <label class="label">Assigned Hostel</label>
+            <select id="rHostel" class="lf" required>
+              <option value="" disabled selected>Select Hostel...</option>
+            </select>
+          </div>
+          <div class="fl">
             <label class="label">Password</label>
             <input type="password" id="rPass" class="lf" placeholder="••••••••" minlength="6" required>
           </div>
@@ -101,6 +107,19 @@
       }
     });
 
+    // Fetch hostels for dropdown
+    apiFetch('/hostels', 'GET').then(res => {
+      if(res.status === 'success') {
+        const select = document.getElementById('rHostel');
+        res.data.forEach(h => {
+          const opt = document.createElement('option');
+          opt.value = h.id;
+          opt.textContent = h.fullName;
+          select.appendChild(opt);
+        });
+      }
+    }).catch(console.error);
+
     fReg.addEventListener('submit', async (e) => {
       e.preventDefault();
       errEl.textContent = '';
@@ -108,7 +127,8 @@
         await Auth.register(
           document.getElementById('rName').value,
           document.getElementById('rEmail').value,
-          document.getElementById('rPass').value
+          document.getElementById('rPass').value,
+          document.getElementById('rHostel').value
         );
         window.location.href = '/';
       } catch (err) {
