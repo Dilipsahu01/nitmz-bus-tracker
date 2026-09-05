@@ -232,29 +232,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .toast.red{border-color:rgba(248,113,113,0.4);color:var(--red);}
 .toast.amber{border-color:rgba(251,191,36,0.4);color:var(--amber);}
 
-/* ===== LOGIN ===== */
-#loginScreen{position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px;}
-#loginScreen::before{content:'';position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:28px 28px;pointer-events:none;}
-.login-wrap{width:100%;max-width:380px;position:relative;z-index:1;}
-.login-header{text-align:center;margin-bottom:24px;}
-.login-logo{width:56px;height:56px;background:var(--white);border-radius:14px;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;}
-.login-logo svg rect,.login-logo svg circle{fill:#0a0a0a;}
-.login-title{font-size:24px;font-weight:700;color:var(--text);margin-bottom:3px;}
-.login-sub{font-size:12px;color:var(--muted);}
-.login-card{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:24px;}
-.fl{margin-bottom:12px;}
-.fl .label{display:block;margin-bottom:6px;}
-.lf{width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:9px;padding:10px 13px;font-family:var(--ui);font-size:13px;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s;}
-.lf:focus{border-color:var(--border3);box-shadow:0 0 0 3px var(--white-dim);}
-.lf::placeholder{color:var(--muted);}
-.lbtn2{width:100%;padding:11px;border:none;border-radius:9px;font-family:var(--ui);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;margin-bottom:7px;letter-spacing:.02em;}
-.lbtn2.primary{background:var(--white);color:#0a0a0a;}
-.lbtn2.primary:hover{background:#d4d4d4;}
-.lbtn2.ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border2);}
-.lbtn2.ghost:hover{background:var(--surface3);}
-.lbtn2:disabled{opacity:0.5;cursor:not-allowed;}
-.err{font-size:12px;color:var(--red);margin-top:8px;min-height:15px;text-align:center;font-weight:500;}
-.divider{text-align:center;font-size:11px;color:var(--muted);padding:3px 0;margin:3px 0;}
+
 
 /* ===== LEAFLET OVERRIDES ===== */
 .leaflet-control-zoom a{background:rgba(10,10,10,.94)!important;color:var(--text)!important;border-color:var(--border2)!important;}
@@ -289,41 +267,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </head>
 <body>
 
-<!-- ===== LOGIN SCREEN ===== -->
-<div id="loginScreen">
-  <div class="login-wrap">
-    <div class="login-header">
-      <div class="login-logo">
-        <svg viewBox="0 0 32 32" width="30" height="30" fill="none">
-          <rect x="2" y="8" width="28" height="16" rx="4" fill="black"/>
-          <rect x="5" y="11" width="8" height="6" rx="1.5" fill="white"/>
-          <rect x="19" y="11" width="8" height="6" rx="1.5" fill="white"/>
-          <circle cx="8" cy="26" r="3" fill="black" stroke="white" stroke-width="1.5"/>
-          <circle cx="24" cy="26" r="3" fill="black" stroke="white" stroke-width="1.5"/>
-        </svg>
-      </div>
-      <div class="login-title">NITMZ Bus</div>
-      <div class="login-sub">Campus live tracker · Real-time GPS</div>
-    </div>
-    <div class="login-card">
-      <div class="fl">
-        <label class="label">Email</label>
-        <input id="lEmail" class="lf" type="email" placeholder="your@nitmz.ac.in" autocomplete="username"/>
-      </div>
-      <div class="fl">
-        <label class="label">Password</label>
-        <input id="lPass" class="lf" type="password" placeholder="••••••••" autocomplete="current-password"/>
-      </div>
-      <button class="lbtn2 primary" id="loginBtn">Login</button>
-      <div class="divider">— or —</div>
-      <button class="lbtn2 ghost" id="studentBtn">Continue as Student (Guest)</button>
-      <div class="err" id="loginErr"></div>
-    </div>
-  </div>
-</div>
+
 
 <!-- ===== MAIN APP ===== -->
-<div id="app" style="display:none;">
+<div id="app">
 
   <!-- TOP BAR -->
   <div id="topBar">
@@ -606,26 +553,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <script>
 'use strict';
 
-/* ================================================================
-   CONFIG — credentials are hashed with SHA-256 for safety
-   Stored as: sha256(password)
-================================================================ */
-async function sha256(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-}
 
-// Pre-hashed values of 'role@123'
-const PASS_HASH = 'b0e5d6c1e85a84d05a2f37e5a5e21d5c9fb3e8f6a3a3e5d9f2b4c7a8e1f6d3b2';
-// We compute at runtime to avoid hardcoding (see doLogin)
-
-const USERS = {
-  'warden@nitmz.ac.in':        { role: 'admin',   name: 'Warden' },
-  'caretaker-bh1@nitmz.ac.in': { role: 'admin',   name: 'Caretaker BH1' },
-  'student@nitmz.ac.in':       { role: 'student',  name: 'Student' }
-};
-// Raw pass only used for hashing at login, never stored
-const RAW_PASS = 'role@123';
 
 const DEFAULT_CENTER = [23.7271, 92.7176];
 const POLL_MS  = 1000;
@@ -751,130 +679,7 @@ function sendNotif(title, body) {
   try { new Notification(title, { body }); } catch(e){}
 }
 
-/* ================================================================
-   AUTH — rate-limited, hashed
-================================================================ */
-document.getElementById('loginBtn').addEventListener('click', doLogin);
-document.getElementById('studentBtn').addEventListener('click', loginAsStudent);
-document.getElementById('lEmail').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
-document.getElementById('lPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
-document.getElementById('logoutBtn').addEventListener('click', logout);
 
-async function doLogin() {
-  const now = Date.now();
-  const errEl = document.getElementById('loginErr');
-
-  // Rate limiting: 5 attempts then 30s lockout
-  if (S.loginLockedUntil > now) {
-    const wait = Math.ceil((S.loginLockedUntil - now) / 1000);
-    errEl.textContent = `Too many attempts. Wait ${wait}s.`;
-    return;
-  }
-
-  const email = document.getElementById('lEmail').value.trim().toLowerCase();
-  const pass  = document.getElementById('lPass').value;
-  const user  = USERS[email];
-
-  if (!email || !pass) { errEl.textContent = 'Enter email and password.'; return; }
-  if (!user) { errEl.textContent = 'Email not recognised.'; bumpAttempts(); return; }
-
-  // Hash the entered password and compare
-  const enteredHash = await sha256(pass);
-  const correctHash = await sha256(RAW_PASS);
-
-  if (enteredHash !== correctHash) {
-    bumpAttempts();
-    errEl.textContent = `Incorrect password. (${5 - S.loginAttempts} attempts left)`;
-    return;
-  }
-
-  S.loginAttempts = 0;
-  errEl.textContent = '';
-  applyRole(user.role, user.name);
-}
-
-function bumpAttempts() {
-  S.loginAttempts++;
-  if (S.loginAttempts >= 5) {
-    S.loginLockedUntil = Date.now() + 30000;
-    S.loginAttempts = 0;
-    document.getElementById('loginErr').textContent = 'Too many attempts. Locked for 30s.';
-  }
-}
-
-function loginAsStudent() {
-  applyRole('student', 'Guest');
-}
-
-function applyRole(role, name) {
-  S.role = role; S.userName = name;
-  // Do NOT store role in localStorage — prevents role escalation via DevTools
-  // Session is ephemeral (in-memory only)
-
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-  document.getElementById('roleTag').textContent = name;
-  document.getElementById('roleTag').style.display = 'inline-flex';
-  document.getElementById('logoutBtn').style.display = 'inline-block';
-
-  if (role === 'admin') {
-    document.getElementById('adminSettings').style.display = 'block';
-    document.getElementById('adminDiag').style.display = 'block';
-    document.getElementById('adminJson').style.display = 'block';
-  }
-
-  // Restore saved bus info
-  const t = LS.get('nitmz_timings') || '';
-  const c = LS.get('nitmz_contact') || '';
-  if (t) { document.getElementById('timingsDisplay').textContent = t; document.getElementById('timingsInput').value = t; }
-  if (c) { document.getElementById('contactDisplay').textContent = c; document.getElementById('contactInput').value = c; }
-
-  buildHostelList();
-  requestNotifPerm();
-  initMobileLayout();
-  toast(`Welcome, ${name}!`, 'white');
-}
-
-function logout() {
-  stopTracking();
-  // Destroy chart to prevent double-init
-  if (speedChart) { speedChart.destroy(); speedChart = null; }
-  // Reset map
-  if (map) { map.remove(); map = null; busMarker = null; userMarker = null; userAccCircle = null; routePolyline = null; }
-  S.mapReady = false;
-  // Stop user geolocation watch
-  if (S.watchId !== null) { navigator.geolocation.clearWatch(S.watchId); S.watchId = null; }
-
-  S.role = null; S.userName = null; S.lastData = null; S.lastDataTime = null;
-  S.speedHistory = []; S.routeData = {}; S.lastRouteOrigin = null;
-  S.userLoc = null; S.proximityNotified = false; S.geofenceAlerted = false;
-  S.loginAttempts = 0;
-
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('loginScreen').style.display = 'flex';
-  document.getElementById('loginErr').textContent = '';
-  document.getElementById('lEmail').value = '';
-  document.getElementById('lPass').value = '';
-  document.getElementById('roleTag').style.display = 'none';
-  document.getElementById('logoutBtn').style.display = 'none';
-  document.getElementById('adminSettings').style.display = 'none';
-  document.getElementById('adminDiag').style.display = 'none';
-  document.getElementById('adminJson').style.display = 'none';
-  document.getElementById('mobileBtmSheet').style.display = 'none';
-  document.getElementById('staleLabel').style.display = 'none';
-  document.getElementById('stalePill').style.display = 'none';
-  document.getElementById('staleWarning').style.display = 'none';
-  document.getElementById('speedBubble').style.display = 'none';
-  document.getElementById('offlineBanner').style.display = 'none';
-  document.getElementById('statusText').textContent = 'Select a bus to start tracking';
-  document.getElementById('statusDot').className = 'dot';
-  // Reset track button
-  const tb = document.getElementById('trackBtn');
-  tb.textContent = '▶ Track Live'; tb.disabled = false;
-  document.getElementById('busCard1').classList.remove('active');
-  document.getElementById('myLocBtn').classList.remove('active');
-  document.getElementById('userDistDisplay').textContent = 'Enable location';
-}
 
 /* ================================================================
    MAP
@@ -942,8 +747,6 @@ function rotateBusMarker(busId, deg) {
   const svg = el.querySelector("#busIconSvg");
   if (svg) svg.style.transform = `rotate(${deg}deg)`;
   if (busId === S.selectedBusId) S.bearing = deg;
-}deg)`;
-  S.bearing = deg;
 }
 
 function setPulse(busId, moving) {
@@ -953,34 +756,45 @@ function setPulse(busId, moving) {
   const p = el.querySelector(".bus-pulse");
   if (p) { if(moving) p.classList.add("on"); else p.classList.remove("on"); }
 }
-}
 
 /* ================================================================
    SMOOTH ANIMATION ENGINE
 ================================================================ */
-function animateBusTo(lat, lng) {
-  const marker = busMarkers.get(S.selectedBusId);
-  if (!marker) return;
-  const cur = busMarker.getLatLng();
-  const dist = haversine(cur.lat, cur.lng, lat, lng);
-  if (dist > 2) rotateBusMarker(bearing(cur.lat, cur.lng, lat, lng));
-
-  if (S.animRaf) cancelAnimationFrame(S.animRaf);
-  S.animFrom = { lat: cur.lat, lng: cur.lng };
-  S.animTo   = { lat, lng };
-  S.animStart = performance.now();
-
-  function step(now) {
-    const t = Math.min((now - S.animStart) / ANIM_MS, 1);
-    const e = easeOutCubic(t);
-    const cLat = S.animFrom.lat + (S.animTo.lat - S.animFrom.lat) * e;
-    const cLng = S.animFrom.lng + (S.animTo.lng - S.animFrom.lng) * e;
-    busMarker.setLatLng([cLat, cLng]);
-    if (S.followMode) map.panTo([cLat, cLng], { animate: true, duration: 0.25, easeLinearity: 0.5 });
-    if (t < 1) S.animRaf = requestAnimationFrame(step);
-    else S.animRaf = null;
+function animateBusTo(busId, lat, lng) {
+  const marker = busMarkers.get(busId);
+  if (!marker) {
+    const icon = buildBusIcon(0);
+    const newMarker = L.marker([lat, lng], { icon }).addTo(map);
+    busMarkers.set(busId, newMarker);
+    if (busId === S.selectedBusId && S.followMode) {
+      map.panTo([lat, lng], { animate: true, duration: 0.25 });
+    }
+    return;
   }
-  S.animRaf = requestAnimationFrame(step);
+  const cur = marker.getLatLng();
+  const dist = haversine(cur.lat, cur.lng, lat, lng);
+  if (dist > 2) rotateBusMarker(busId, bearing(cur.lat, cur.lng, lat, lng));
+
+  if (busId === S.selectedBusId) {
+    if (S.animRaf) cancelAnimationFrame(S.animRaf);
+    S.animFrom = { lat: cur.lat, lng: cur.lng };
+    S.animTo   = { lat, lng };
+    S.animStart = performance.now();
+
+    function step(now) {
+      const t = Math.min((now - S.animStart) / ANIM_MS, 1);
+      const e = easeOutCubic(t);
+      const cLat = S.animFrom.lat + (S.animTo.lat - S.animFrom.lat) * e;
+      const cLng = S.animFrom.lng + (S.animTo.lng - S.animFrom.lng) * e;
+      marker.setLatLng([cLat, cLng]);
+      if (S.followMode) map.panTo([cLat, cLng], { animate: true, duration: 0.25, easeLinearity: 0.5 });
+      if (t < 1) S.animRaf = requestAnimationFrame(step);
+      else S.animRaf = null;
+    }
+    S.animRaf = requestAnimationFrame(step);
+  } else {
+    marker.setLatLng([lat, lng]);
+  }
 }
 
 /* ================================================================
@@ -1080,7 +894,8 @@ function updateUserDistDisplay() {
 }
 
 function checkProximity() {
-  if (!S.userLoc || !busMarker || !S.tracking) return;
+  const marker = busMarkers.get(S.selectedBusId);
+  if (!S.userLoc || !marker || !S.tracking) return;
   const busPos = marker.getLatLng();
   const d = haversine(S.userLoc.lat, S.userLoc.lng, busPos.lat, busPos.lng);
   if (d < PROXIMITY_ALERT_M && !S.proximityNotified) {
@@ -1365,9 +1180,13 @@ function stopStaleTimer() {
 /* ================================================================
    DATA HANDLER
 ================================================================ */
-function onBusData(data) {
-  S.lastData = data;
-  S.lastDataTime = Date.now();
+function onBusData(busId, data, status) {
+  const isSelected = (busId === S.selectedBusId);
+
+  if (isSelected) {
+    S.lastData = data;
+    S.lastDataTime = Date.now();
+  }
 
   const hasFix = data.has_fix;
   const speed  = parseFloat(data.speed_kmh) || 0;
@@ -1375,62 +1194,68 @@ function onBusData(data) {
   const lng    = parseFloat(data.longitude);
   const moving = hasFix && speed > 2;
 
-  setConn(hasFix ? 'live' : 'searching');
+  if (isSelected) {
+    setConn(hasFix ? 'live' : 'searching');
+  }
 
   if (hasFix && lat && lng) {
-    animateBusTo(lat, lng);
-    checkGeofence(lat, lng);
-  }
-
-  setPulse(moving);
-
-  // Speed bubble
-  const sb = document.getElementById('speedBubble');
-  document.getElementById('speedVal').textContent = speed.toFixed(1);
-  sb.style.display = hasFix ? 'block' : 'none';
-  sb.classList.remove('loading');
-
-  // Right panel
-  updateStatusBig(hasFix, moving);
-  document.getElementById('rpSpeed').textContent = hasFix ? speed.toFixed(1) : '--';
-  document.getElementById('statusText').textContent =
-    hasFix ? (moving ? `Moving · ${speed.toFixed(1)} km/h` : 'Parked on campus') : 'Searching GPS signal...';
-
-  // Network type — normalised
-  if (data.net_type) {
-    const nt = normaliseNetType(data.net_type);
-    const nb = document.getElementById('netBadge');
-    nb.textContent = nt;
-    nb.style.display = 'inline-flex';
-    document.getElementById('rpNet').textContent = nt;
-  }
-
-  // Signal quality (visible to all)
-  const hdop = data.hdop != null ? parseFloat(data.hdop) : null;
-  updateSignalQuality(hdop, data.satellites);
-  document.getElementById('dSat').textContent = data.satellites ?? '--';
-
-  // Admin fields
-  if (S.role === 'admin') {
-    document.getElementById('dLat').textContent  = (hasFix && lat) ? lat.toFixed(6) : '--';
-    document.getElementById('dLng').textContent  = (hasFix && lng) ? lng.toFixed(6) : '--';
-    document.getElementById('dHdop').textContent = hdop != null ? hdop.toFixed(1) : '--';
-    document.getElementById('dFix').textContent  = hasFix ? 'Yes' : 'No';
-    document.getElementById('rawJson').textContent = JSON.stringify(data, null, 2);
-  }
-
-  pushSpeed(speed);
-  updateUserDistDisplay();
-  checkProximity();
-
-  if (hasFix && lat && lng) {
-    const origin = S.lastRouteOrigin;
-    if (!origin || haversine(origin.lat, origin.lng, lat, lng) > ROUTE_REFETCH_DIST) {
-      fetchAllRoutes();
+    animateBusTo(busId, lat, lng);
+    if (isSelected) {
+      checkGeofence(lat, lng);
     }
   }
 
-  updateETAList();
+  setPulse(busId, moving);
+
+  if (isSelected) {
+    // Speed bubble
+    const sb = document.getElementById('speedBubble');
+    document.getElementById('speedVal').textContent = speed.toFixed(1);
+    sb.style.display = hasFix ? 'block' : 'none';
+    sb.classList.remove('loading');
+
+    // Right panel
+    updateStatusBig(hasFix, moving);
+    document.getElementById('rpSpeed').textContent = hasFix ? speed.toFixed(1) : '--';
+    document.getElementById('statusText').textContent =
+      hasFix ? (moving ? `Moving · ${speed.toFixed(1)} km/h` : 'Parked on campus') : 'Searching GPS signal...';
+
+    // Network type — normalised
+    if (data.net_type) {
+      const nt = normaliseNetType(data.net_type);
+      const nb = document.getElementById('netBadge');
+      nb.textContent = nt;
+      nb.style.display = 'inline-flex';
+      document.getElementById('rpNet').textContent = nt;
+    }
+
+    // Signal quality (visible to all)
+    const hdop = data.hdop != null ? parseFloat(data.hdop) : null;
+    updateSignalQuality(hdop, data.satellites);
+    document.getElementById('dSat').textContent = data.satellites ?? '--';
+
+    // Admin fields
+    if (S.role === 'admin') {
+      document.getElementById('dLat').textContent  = (hasFix && lat) ? lat.toFixed(6) : '--';
+      document.getElementById('dLng').textContent  = (hasFix && lng) ? lng.toFixed(6) : '--';
+      document.getElementById('dHdop').textContent = hdop != null ? hdop.toFixed(1) : '--';
+      document.getElementById('dFix').textContent  = hasFix ? 'Yes' : 'No';
+      document.getElementById('rawJson').textContent = JSON.stringify(data, null, 2);
+    }
+
+    pushSpeed(speed);
+    updateUserDistDisplay();
+    checkProximity();
+
+    if (hasFix && lat && lng) {
+      const origin = S.lastRouteOrigin;
+      if (!origin || haversine(origin.lat, origin.lng, lat, lng) > ROUTE_REFETCH_DIST) {
+        fetchAllRoutes();
+      }
+    }
+
+    updateETAList();
+  }
 }
 
 function updateStatusBig(hasFix, moving) {
@@ -1643,8 +1468,8 @@ document.addEventListener('visibilitychange', () => {
   const user = Auth.getUser();
   if (!user) return; // will redirect anyway
 
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
+  S.role = user.role;
+  S.userName = user.name;
   
   const btn = document.getElementById('logoutBtn');
   btn.style.display = 'block';
@@ -1653,16 +1478,29 @@ document.addEventListener('visibilitychange', () => {
   btn.style.color = '';
   btn.onclick = () => Auth.logout();
   
+  document.getElementById('roleTag').textContent = user.name;
+  document.getElementById('roleTag').style.display = 'inline-flex';
+  
   if (user.role === 'admin' || user.role === 'caretaker') {
-    document.getElementById('roleTag').style.display = 'inline-flex';
-    document.getElementById('roleTag').textContent = user.role.toUpperCase();
     document.getElementById('adminSettings').style.display = 'block';
     document.getElementById('adminDiag').style.display = 'block';
+    document.getElementById('adminJson').style.display = 'block';
   } else {
-    document.getElementById('roleTag').style.display = 'none';
     document.getElementById('adminSettings').style.display = 'none';
     document.getElementById('adminDiag').style.display = 'none';
+    document.getElementById('adminJson').style.display = 'none';
   }
+  
+  // Restore saved bus info
+  const t = LS.get('nitmz_timings') || '';
+  const c = LS.get('nitmz_contact') || '';
+  if (t) { document.getElementById('timingsDisplay').textContent = t; document.getElementById('timingsInput').value = t; }
+  if (c) { document.getElementById('contactDisplay').textContent = c; document.getElementById('contactInput').value = c; }
+
+  buildHostelList();
+  requestNotifPerm();
+  initMobileLayout();
+  toast(`Welcome, ${user.name}!`, 'white');
   
   initMap();
   fetchBus();

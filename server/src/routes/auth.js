@@ -27,9 +27,8 @@ router.post('/api/auth/register', async (req, res) => {
       return res.status(403).json({ error: 'Only @nitmz.ac.in email addresses are allowed' });
     }
 
-    if (role !== 'caretaker') {
-      role = 'student';
-    }
+    // Force all public registrations to student
+    role = 'student';
 
     // Check duplicate email
     const existingUser = await query('SELECT id FROM users WHERE email = $1', [email]);

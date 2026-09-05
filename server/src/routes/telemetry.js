@@ -2,6 +2,18 @@ const express = require('express');
 const router = express.Router();
 const { query } = require('../db');
 const { requireAuth, requireApiKey } = require('../middleware/auth');
+const crypto = require('crypto');
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const p1 = lat1 * Math.PI/180;
+  const p2 = lat2 * Math.PI/180;
+  const dp = (lat2-lat1) * Math.PI/180;
+  const dl = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
 
 /**
  * Normalize an incoming telemetry payload.
@@ -28,6 +40,7 @@ function normalizeTelemetry(body) {
     net_type:  body.net_type || 'unknown',
     ts:        body.ts ?? body.timestamp ?? null,
     status:    body.status || 'idle',
+    is_sos:    body.is_sos === true || body.is_sos === 'true'
   };
 }
 
@@ -48,13 +61,38 @@ router.post('/api/update-location', requireApiKey(), async (req, res) => {
       [d.device_id, d.bus_id, d.lat, d.lng, d.speed, d.accuracy, d.has_fix, d.satellites, d.hdop, d.net_type, d.ts, d.status]
     );
 
-    // Update live bus position if bus_id contains a number
+    // Update live bus position and updated_at
     const parsedBusNumber = Number(String(d.bus_id || '').replace(/[^0-9]/g, ''));
     if (parsedBusNumber) {
       await query(
-        `UPDATE buses SET latitude = $1, longitude = $2, speed = $3, status = COALESCE($4, status) WHERE bus_number = $5`,
+        `UPDATE buses SET latitude = $1, longitude = $2, speed = $3, status = COALESCE($4, status), updated_at = NOW() WHERE bus_number = $5`,
         [d.lat, d.lng, d.speed, d.status === 'active' ? 'running' : d.status, parsedBusNumber]
       );
+
+      // Feature: SOS Alert
+      if (d.is_sos) {
+        const nId = 'n_' + crypto.randomBytes(6).toString('hex');
+        await query(
+          `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
+          [nId, 'SOS ALERT', `Emergency SOS triggered on Bus ${parsedBusNumber}!`, 'alert', parsedBusNumber, 'system']
+        );
+      }
+
+      // Feature: Route Deviation / Geofence
+      const distFromCampus = haversine(d.lat, d.lng, 23.7271, 92.7176);
+      if (distFromCampus > 4000) { // 4km boundary
+        const recent = await query(
+          `SELECT id FROM notifications WHERE type = 'warning' AND bus_number = $1 AND sent_at > NOW() - INTERVAL '15 minutes'`, 
+          [parsedBusNumber]
+        );
+        if (recent.length === 0) {
+          const nId = 'n_' + crypto.randomBytes(6).toString('hex');
+          await query(
+            `INSERT INTO notifications (id, title, message, type, bus_number, sent_by) VALUES ($1, $2, $3, $4, $5, $6)`, 
+            [nId, 'Geofence Alert', `Bus ${parsedBusNumber} has left the 4km campus boundary.`, 'warning', parsedBusNumber, 'system']
+          );
+        }
+      }
     }
 
     res.json({ message: 'Data received successfully', status: 'success' });
@@ -99,7 +137,7 @@ router.post('/endpoint', requireApiKey(), async (req, res) => {
 // Public — returns latest telemetry WITH full diagnostics
 router.get('/api/location/latest', async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM telemetry ORDER BY received_at DESC LIMIT 1');
+    const rows = await query('SELECT * FROM telemetry ORDER BY ts DESC NULLS LAST, received_at DESC LIMIT 1');
     if (!rows.length) {
       return res.json({
         status: 'success',
@@ -124,16 +162,10 @@ router.get('/api/location/latest', async (req, res) => {
     res.json({
       status: 'success',
       data: {
-        deviceId: row.device_id || 'unknown-device',
         busId: row.bus_id || 'Bus-Unknown',
         lat: Number(row.lat),
         lng: Number(row.lng),
         speed: Number(row.speed || 0),
-        accuracy: Number(row.accuracy || 1.0),
-        hasFix: row.has_fix ?? false,
-        satellites: row.satellites ?? 0,
-        hdop: Number(row.hdop ?? 99.9),
-        netType: row.net_type || 'unknown',
         timestamp: row.ts || row.received_at,
         status: row.status || 'idle'
       }
@@ -211,41 +243,28 @@ router.get('/api/telemetry/diagnostics', requireAuth(['caretaker', 'admin']), as
   }
 });
 
-// ─── POST /update-gps (legacy) ──────────────────────────────────
-router.post('/update-gps', async (req, res) => {
+// ─── GET /api/telemetry/history ───────────────────────────────
+// PROTECTED — Caretakers & admins only
+// Time-series playback of historical routes
+router.get('/api/telemetry/history', requireAuth(['caretaker', 'admin']), async (req, res) => {
   try {
-    const { lat, lng } = req.body;
-    if (lat === undefined || lng === undefined) {
-      return res.status(400).json({ status: 'Error', message: 'lat and lng required' });
-    }
-
-    await query(
-      `INSERT INTO telemetry (device_id, lat, lng) VALUES ($1, $2, $3)`,
-      ['ESP32-legacy', lat, lng]
-    );
-
-    res.json({ status: 'Success', message: 'Location Updated' });
+    const { bus_id, start_time, end_time } = req.query;
+    if (!bus_id) return res.status(400).json({ status: 'error', message: 'bus_id required' });
+    
+    const start = start_time || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const end = end_time || new Date().toISOString();
+    
+    const rows = await query(`
+      SELECT lat, lng, speed, ts, received_at, status 
+      FROM telemetry 
+      WHERE bus_id LIKE $1 AND received_at >= $2 AND received_at <= $3
+      ORDER BY ts ASC NULLS LAST, received_at ASC
+    `, [`%${bus_id}%`, start, end]);
+    
+    res.json({ status: 'success', data: rows });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'Error', message: 'Server error' });
-  }
-});
-
-// ─── GET /get-location (legacy) ─────────────────────────────────
-router.get('/get-location', async (req, res) => {
-  try {
-    const rows = await query('SELECT lat, lng, received_at FROM telemetry ORDER BY received_at DESC LIMIT 1');
-    if (!rows.length) {
-      return res.json({ latitude: 0, longitude: 0, timestamp: new Date().toISOString() });
-    }
-    res.json({
-      latitude: Number(rows[0].lat),
-      longitude: Number(rows[0].lng),
-      timestamp: rows[0].received_at
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    console.error('[telemetry] GET /api/telemetry/history error:', err.message);
+    res.status(500).json({ status: 'error', message: 'Server error' });
   }
 });
 

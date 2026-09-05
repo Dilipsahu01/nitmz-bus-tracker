@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS buses (
   speed NUMERIC(8,2) NOT NULL DEFAULT 0,
   is_enabled BOOLEAN NOT NULL DEFAULT true,
   route VARCHAR(120) NOT NULL DEFAULT 'Hostel ↔ MBSE',
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- 4. drivers (1:1 with bus)

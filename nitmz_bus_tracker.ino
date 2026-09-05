@@ -6,6 +6,9 @@
 #include <TinyGsmClient.h>
 #include <ArduinoHttpClient.h>
 #include <TinyGPS++.h>
+#include <esp_task_wdt.h>
+
+#define WDT_TIMEOUT 60 // 60 seconds
 
 WiFiMulti wifiMulti;
 
@@ -43,6 +46,7 @@ const char* secretKey   = "NITMZ_ESP32_SECURE_API_KEY_2026";
 #define GPS_TX_PIN 17
 #define GSM_RX_PIN 26
 #define GSM_TX_PIN 27
+#define SOS_PIN 34 // Hardware SOS Button
 
 TinyGPSPlus    gps;
 HardwareSerial SerialGPS(2);   // UART2 → GPS
@@ -59,6 +63,9 @@ HttpClient          httpGSM(gsmClient, server, port);
 unsigned long lastTransmissionTime = 0;
 const unsigned long transmissionInterval = 1000; // 1 second (per spec)
 
+unsigned long lastGprsReconnectAttempt = 0;
+const unsigned long gprsReconnectInterval = 30000; // 30 seconds
+
 // ============================================================
 // NETWORK STATE FLAGS
 // ============================================================
@@ -68,6 +75,15 @@ bool wifiConnected = false;
 // Tracks which network actually sent the last packet
 // "GSM" | "WiFi" | "None"
 String activeNetworkType = "None";
+
+// ============================================================
+// HARDWARE INTERRUPTS
+// ============================================================
+volatile bool sosTriggered = false;
+
+void IRAM_ATTR handleSOSInterrupt() {
+  sosTriggered = true;
+}
 
 // ============================================================
 // CIRCULAR BUFFER
@@ -94,14 +110,16 @@ void enqueuePayload(const String& payload) {
   }
 }
 
-String dequeuePayload() {
+String peekPayload() {
+  if (queueCount > 0) return payloadQueue[head];
+  return "";
+}
+
+void dropPayload() {
   if (queueCount > 0) {
-    String payload = payloadQueue[head];
     head = (head + 1) % BUFFER_SIZE;
     queueCount--;
-    return payload;
   }
-  return "";
 }
 
 // ============================================================
@@ -196,9 +214,9 @@ void printGPSInfo() {
 // BUILD JSON PAYLOAD
 // Includes all fields:
 // latitude, longitude, speed, timestamp, status, satellites,
-// hdop, has_fix, net_type
+// hdop, has_fix, net_type, is_sos
 // ============================================================
-String buildJSONPayload(const String& netType) {
+String buildJSONPayload(const String& netType, bool isSos) {
   // Derive status string from GPS fix
   String status = gps.location.isValid() ? "active" : "no_fix";
 
@@ -213,6 +231,8 @@ String buildJSONPayload(const String& netType) {
   }
 
   String json = "{";
+  json += "\"device_id\":\"ESP32-Device-1\",";
+  json += "\"bus_id\":\"Bus 5\",";
   json += "\"has_fix\":"     + String(gps.location.isValid() ? "true" : "false") + ",";
   json += "\"latitude\":"    + String(gps.location.lat(), 6)  + ",";
   json += "\"longitude\":"   + String(gps.location.lng(), 6)  + ",";
@@ -221,6 +241,7 @@ String buildJSONPayload(const String& netType) {
   json += "\"hdop\":"        + String(gps.hdop.isValid()    ? gps.hdop.hdop()        : 99.9, 1) + ",";
   json += "\"timestamp\":\"" + timestamp + "\",";
   json += "\"status\":\""    + status    + "\",";
+  json += "\"is_sos\":"      + String(isSos ? "true" : "false") + ",";
   json += "\"net_type\":\""  + netType   + "\"";   // set at point of transmission
   json += "}";
   return json;
@@ -294,7 +315,7 @@ void flushBuffer() {
   Serial.printf("[BUFFER] Flushing %d stored payload(s)...\n", queueCount);
 
   while (queueCount > 0) {
-    String oldPayload = dequeuePayload();
+    String oldPayload = peekPayload();
     bool flushed = false;
 
     // Use whichever path is currently live
@@ -303,17 +324,16 @@ void flushBuffer() {
     } else if (WiFi.status() == WL_CONNECTED) {
       flushed = sendViaWiFi(oldPayload);
     } else {
-      // No path available — re-enqueue and stop flush
-      Serial.println("[BUFFER] Network lost during flush. Re-queuing remaining.");
-      enqueuePayload(oldPayload);
+      // No path available — stop flush
+      Serial.println("[BUFFER] Network lost during flush. Stopping flush.");
       break;
     }
 
-    if (flushed)
+    if (flushed) {
       Serial.println("[BUFFER] Buffered payload sent.");
-    else {
-      Serial.println("[BUFFER] Buffered send failed. Re-queuing.");
-      enqueuePayload(oldPayload);
+      dropPayload();
+    } else {
+      Serial.println("[BUFFER] Buffered send failed. Stopping flush.");
       break;
     }
 
@@ -330,7 +350,13 @@ void setup() {
   SerialGPS.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   SerialGSM.begin(9600, SERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
 
+  pinMode(SOS_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(SOS_PIN), handleSOSInterrupt, FALLING);
+
   Serial.println("[SETUP] Starting NIT-MZ Bus Tracker...");
+
+  esp_task_wdt_init(WDT_TIMEOUT, true);
+  esp_task_wdt_add(NULL);
 
   // Register Wi-Fi networks (not yet connecting — GSM goes first)
   wifiMulti.addAP(ssid1, pass1);
@@ -373,13 +399,21 @@ void setup() {
 // LOOP
 // ============================================================
 void loop() {
+  esp_task_wdt_reset();
+
   // Feed GPS UART data into TinyGPS++ parser continuously
   while (SerialGPS.available() > 0) {
     gps.encode(SerialGPS.read());
   }
 
-  if (millis() - lastTransmissionTime >= transmissionInterval) {
+  // Force transmit if SOS triggered, otherwise use interval
+  bool isSosEvent = sosTriggered;
+  if (isSosEvent || (millis() - lastTransmissionTime >= transmissionInterval)) {
     lastTransmissionTime = millis();
+    if (isSosEvent) {
+      Serial.println("[SOS] EMERGENCY BUTTON TRIGGERED!");
+      sosTriggered = false; // reset flag
+    }
 
     printGPSInfo();
 
@@ -390,7 +424,7 @@ void loop() {
     if (gprsConnected) {
       // sendViaGPRS() internally handles reconnection attempts
       Serial.println("[NET] Attempting via GSM (PRIMARY)...");
-      String payload = buildJSONPayload("GSM");
+      String payload = buildJSONPayload("GSM", isSosEvent);
       sentSuccessfully = sendViaGPRS(payload);
       if (sentSuccessfully) usedNetwork = "GSM";
     }
@@ -404,7 +438,7 @@ void loop() {
 
       if (wifiConnected || WiFi.status() == WL_CONNECTED) {
         Serial.println("[NET] GSM unavailable. Attempting via Wi-Fi (SECONDARY)...");
-        String payload = buildJSONPayload("WiFi");
+        String payload = buildJSONPayload("WiFi", isSosEvent);
         sentSuccessfully = sendViaWiFi(payload);
         if (sentSuccessfully) usedNetwork = "WiFi";
       }
@@ -414,14 +448,15 @@ void loop() {
     if (!sentSuccessfully) {
       Serial.println("[NET] Both networks unavailable. Cycling retry...");
 
-      // Re-attempt GSM as part of cyclic retry
-      if (!gprsConnected || !modem.isGprsConnected()) {
-        Serial.println("[NET] Retrying GSM...");
+      // Non-blocking GPRS reconnect attempt every 30s
+      if ((!gprsConnected || !modem.isGprsConnected()) && (millis() - lastGprsReconnectAttempt >= gprsReconnectInterval)) {
+        Serial.println("[NET] Attempting non-blocking GPRS reconnect...");
+        lastGprsReconnectAttempt = millis();
         gprsConnected = initGPRS();
       }
 
       // Build payload and buffer it regardless
-      String payload = buildJSONPayload("None");
+      String payload = buildJSONPayload("None", isSosEvent);
       Serial.println("[NET] No network. Saving to circular buffer.");
       enqueuePayload(payload);
     } else {

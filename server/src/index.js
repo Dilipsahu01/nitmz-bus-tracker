@@ -8,6 +8,16 @@
  */
 
 require('dotenv').config();
+
+const REQUIRED_ENVS = ['JWT_SECRET', 'API_SECRET_KEY'];
+for (const env of REQUIRED_ENVS) {
+  if (!process.env[env]) {
+    console.error(`[FATAL] Missing required environment variable: ${env}`);
+    console.error('Server cannot start. Please define it in your .env file.');
+    process.exit(1); // Fail-fast
+  }
+}
+
 const express = require('express');
 const path = require('path');
 
