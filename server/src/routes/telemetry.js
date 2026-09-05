@@ -457,6 +457,13 @@ router.get('/api/telemetry/history', requireAuth(['caretaker', 'admin']), async 
       ORDER BY ts ASC NULLS LAST, received_at ASC
     `, [`%${bus_id}%`, start, end]);
     
+    res.json({ status: 'success', data: rows });
+  } catch (err) {
+    console.error('[telemetry] GET /api/telemetry/history error:', err.message);
+    res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+});
+
 // ─── POST /api/telemetry/reset-sos ─────────────────────────────
 // Reset Emergency SOS state for all buses
 router.post('/api/telemetry/reset-sos', async (req, res) => {
@@ -488,8 +495,6 @@ router.post('/api/telemetry/reset-sos', async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Failed to reset SOS alerts' });
   }
 });
-
-module.exports = router;
 
 // --- COLD PATH: Background DB Sync ---
 let isSyncing = false;
@@ -551,3 +556,5 @@ setInterval(async () => {
     isSyncing = false;
   }
 }, 30000); // Runs every 30 seconds
+
+module.exports = router;
