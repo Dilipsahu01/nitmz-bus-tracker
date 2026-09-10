@@ -429,7 +429,7 @@ async def main_loop():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3000)
     parser.add_argument("--https", action="store_true")
-    parser.add_argument("--api-key", default="BUSTRACKESP1SECRETKEY")
+    parser.add_argument("--api-key", default=os.environ.get("API_SECRET_KEY", "BUSTRACKESP1SECRETKEY"))
     parser.add_argument("--active-per-hostel-min", type=int, default=1)
     parser.add_argument("--active-per-hostel-max", type=int, default=3)
     args = parser.parse_args()
