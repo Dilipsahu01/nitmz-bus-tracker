@@ -106,8 +106,18 @@ class BusSimulator:
             self.lat, self.lng = get_point_along_route(self.route, self.sub_t)
         else:
             self.lat, self.lng = lerp(self.hostel_coords, self.mbse_coords, self.sub_t)
+            
+        self.last_sent = 0
         
     def tick(self):
+        current_time = time.time()
+        
+        # Idle buses only transmit a heartbeat every 30 seconds to save server bandwidth
+        if not self.is_running and (current_time - self.last_sent < 30.0):
+            return None
+            
+        self.last_sent = current_time
+        
         if self.is_running:
             # Move along the route
             speed_kmh = random.uniform(15.0, 35.0)
@@ -187,8 +197,11 @@ def main():
 
     try:
         while True:
+            active_threads = 0
             for sim in simulators:
                 payload = sim.tick()
+                if not payload:
+                    continue
                 
                 # Send asynchronously in a quick thread so one slow response doesn't block the fleet
                 def post_data(p=payload):
@@ -197,12 +210,13 @@ def main():
                         print(f"  [Bus {p['bus_id']}] ❌ Error: {status} {body[:50]}")
 
                 threading.Thread(target=post_data, daemon=True).start()
+                active_threads += 1
                 
                 # Tiny stagger between bus requests
                 time.sleep(0.05)
             
             ts = datetime.now().strftime("%H:%M:%S")
-            print(f"[{ts}] 📡 Broadcasted updates for {len(simulators)} buses")
+            print(f"[{ts}] 📡 Broadcasted updates for {active_threads} buses")
             time.sleep(args.interval)
 
     except KeyboardInterrupt:
