@@ -152,8 +152,8 @@ class ESP32Node:
         self.fleet_mgr = fleet_mgr
         
         # Hardware Config
-        self.report_interval = random.choice([3.0, 5.0, 7.0, 10.0]) # Firmware config variance
-        self.battery_pct = random.randint(30, 100)
+        self.report_interval = random.choice([3.0, 5.0]) # Firmware config variance
+        self.battery_pct = random.randint(80, 100)
         self.state = "OFF"
         self.is_offline = False
         self.buffer = deque(maxlen=20)
@@ -190,20 +190,20 @@ class ESP32Node:
         """Send data with geographic dead zones and exponential backoff."""
         # Geographic Dead Zone (near middle of route in hills)
         in_dead_zone = 0.4 < self.sub_t < 0.6
-        drop_chance = 0.60 if in_dead_zone else 0.02
+        drop_chance = 0.05 if in_dead_zone else 0.005
         
         if random.random() < drop_chance:
             self.is_offline = True
 
         if self.is_offline:
             self.buffer.append(payload)
-            if not in_dead_zone and random.random() < 0.3: # Recover faster outside dead zone
+            if random.random() < 0.8: # Recover very fast
                 self.is_offline = False
                 self.backoff_time = 1.0
             else:
                 # Exponential backoff on retries (simulating modem reconnection)
                 await asyncio.sleep(self.backoff_time)
-                self.backoff_time = min(16.0, self.backoff_time * 2)
+                self.backoff_time = min(4.0, self.backoff_time * 1.5)
             return False
 
         # Flush Buffer (Preserving original timestamps!)
@@ -259,13 +259,13 @@ class ESP32Node:
         while True:
             current_time = time.time()
             
-            # 1. Brownout / Reboot simulation (0.1% chance)
-            if random.random() < 0.001 and self.state == "ACTIVE":
-                print(f"{RED}🔌 [Bus {self.bus_number}] BROWNOUT! Hardware crashed. Rebooting...{RESET}")
-                self.state = "OFF"
-                self.current_speed = 0.0
-                await asyncio.sleep(15) # Boot delay
-                self.state = "ACQUIRING"
+            # 1. Brownout / Reboot simulation (Disabled for cleaner demo)
+            # if random.random() < 0.001 and self.state == "ACTIVE":
+            #     print(f"{RED}🔌 [Bus {self.bus_number}] BROWNOUT! Hardware crashed. Rebooting...{RESET}")
+            #     self.state = "OFF"
+            #     self.current_speed = 0.0
+            #     await asyncio.sleep(15) # Boot delay
+            #     self.state = "ACQUIRING"
             
             # 2. State Machine Processing
             if self.state == "OFF":
@@ -361,7 +361,7 @@ class ESP32Node:
                     self.lat, self.lng = lerp(self.hostel_coords, MBSE_COORDS, self.sub_t)
                 
                 # Battery drain
-                if random.random() < 0.1:
+                if random.random() < 0.02: # Slow battery drain
                     self.battery_pct = max(0, self.battery_pct - 1)
 
                 self.calculate_gps()
