@@ -99,11 +99,7 @@ class FleetManager:
         self.peak_multiplier = 1.0
         
     def roll_daily_schedule(self):
-        self.is_holiday = random.random() < 0.1 # 10% chance of a Sunday/Holiday
-        if self.is_holiday:
-            print(f"\n{CYAN}📅 FLEET SCHEDULER: Today is a Holiday! Fleet operating at minimum capacity.{RESET}")
-        else:
-            print(f"\n{CYAN}📅 FLEET SCHEDULER: New Day! Re-rolling active fleet distributions...{RESET}")
+        print(f"\n{CYAN}📅 FLEET SCHEDULER: Orchestrating Symmetrical Demo Mode...{RESET}")
             
         hostel_pools = {}
         for node in self.nodes:
@@ -114,34 +110,40 @@ class FleetManager:
         total_active = 0
         for hostel, pool in hostel_pools.items():
             pool_size = len(pool)
-            if self.is_holiday:
-                target_active = 0 if pool_size == 1 else 1
-            else:
-                target_active = min(pool_size, random.randint(self.min_active, self.max_active))
-                if pool_size == 1: target_active = 1
+            target_active = math.ceil(pool_size / 2) # Exactly 50% (rounded up)
                 
-            active_buses = random.sample(pool, target_active)
-            for node in pool:
-                if node in active_buses:
-                    node.force_state("ACTIVE")
+            # Sort buses so it's deterministic
+            pool.sort(key=lambda n: n.bus_number)
+            
+            active_buses = pool[:target_active]
+            sleeping_buses = pool[target_active:]
+            
+            # Symmetrically distribute active buses
+            for i, node in enumerate(active_buses):
+                node.state = "ACTIVE"
+                if i % 2 == 0:
+                    node.sub_t = 0.0 # Start at Hostel
+                    node.direction = 1
                 else:
-                    node.force_state("SLEEP")
+                    node.sub_t = 1.0 # Start at MBSE
+                    node.direction = -1
+                node.current_speed = 0.0
+                node.state = "LAYOVER" # Force a brief layover to start
+                node.layover_end_time = time.time() + random.randint(10, 30) # Depart shortly
+                    
+            for node in sleeping_buses:
+                node.state = "SLEEP"
+                node.sub_t = 0.0
+                node.direction = 1
+                node.current_speed = 0.0
+                
             total_active += target_active
             print(f"   [{hostel}] {target_active}/{pool_size} buses active.")
             
         print(f"{CYAN}   Total Fleet Active: {total_active}/{len(self.nodes)}{RESET}\n")
 
     def update_time_of_day(self):
-        now = datetime.now(timezone.utc)
-        if now.day != self.current_day:
-            self.current_day = now.day
-            self.roll_daily_schedule()
-            
-        # Peak hours: 7:30-9:30 AM (UTC+5:30 -> UTC 2:00-4:00) and 4:00-6:00 PM (UTC 10:30-12:30)
-        # Simplified for simulation: just randomly modulate peak multiplier
-        hour = now.hour
-        is_peak = (2 <= hour <= 4) or (10 <= hour <= 12)
-        self.peak_multiplier = 1.5 if is_peak and not self.is_holiday else 1.0
+        pass # Disabled for static demo
 
 class ESP32Node:
     def __init__(self, bus_number, hostel, url, api_key, fleet_mgr):
@@ -176,15 +178,7 @@ class ESP32Node:
         self.layover_end_time = 0
 
     def force_state(self, new_state):
-        if self.state != new_state:
-            self.state = new_state
-            if new_state == "ACTIVE":
-                self.sub_t = random.uniform(0.1, 0.9)
-                self.direction = random.choice([-1, 1])
-                self.state = "ACQUIRING" # Hardware boots up
-            else:
-                self.sub_t = 0.0
-                self.current_speed = 0.0
+        pass # Handled by roll_daily_schedule for static demo
 
     async def send_payload(self, payload, is_flush=False):
         """Send data with geographic dead zones and exponential backoff."""
@@ -349,15 +343,8 @@ class ESP32Node:
                     loc = "MBSE" if at_mbse else self.hostel
                     self.layover_end_time = current_time + random.randint(120, 180)
                     
-                    # Shift Swap Logic (Only at Hostel)
-                    if not at_mbse:
-                        same_hostel_nodes = [n for n in self.fleet_mgr.nodes if n.hostel == self.hostel and n.state == "SLEEP"]
-                        if same_hostel_nodes and random.random() < 0.6:
-                            swap_node = random.choice(same_hostel_nodes)
-                            swap_node.force_state("ACTIVE")
-                            self.force_state("SLEEP")
-                            print(f"{MAGENTA}🔄 SHIFT SWAP [{self.hostel}]: Bus {self.bus_number} parked. Woke up Bus {swap_node.bus_number}!{RESET}")
-                            continue # Sleep immediately
+                    # No Shift Swapping: The demo buses loop forever
+                    continue
 
                 # Update Coords
                 if self.route:
