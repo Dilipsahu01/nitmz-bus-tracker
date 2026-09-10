@@ -48,6 +48,16 @@
           <button type="submit" class="lbtn2" style="background:var(--white);color:#0a0a0a;margin-top:10px;">
             Sign In
           </button>
+          
+          <div style="display: flex; align-items: center; margin: 15px 0;">
+            <hr style="flex: 1; border: none; border-top: 1px solid var(--border2);">
+            <span style="padding: 0 10px; color: var(--text2); font-size: 12px;">OR</span>
+            <hr style="flex: 1; border: none; border-top: 1px solid var(--border2);">
+          </div>
+          
+          <button type="button" id="guestBtn" class="lbtn2" style="background:var(--surface3);color:var(--text);border:1px solid var(--border2);">
+            Continue as Guest
+          </button>
         </form>
 
         <!-- Register Form -->
@@ -111,6 +121,20 @@
         window.location.href = '/';
       } catch (err) {
         errEl.textContent = err.message || 'Invalid credentials';
+      }
+    });
+
+    const guestBtn = document.getElementById('guestBtn');
+    guestBtn.addEventListener('click', async () => {
+      errEl.textContent = '';
+      const originalText = guestBtn.textContent;
+      guestBtn.textContent = 'Logging in...';
+      try {
+        await Auth.login('student@nitmz.ac.in', 'student123');
+        window.location.href = '/';
+      } catch (err) {
+        errEl.textContent = 'Guest login failed: ' + (err.message || 'Server error');
+        guestBtn.textContent = originalText;
       }
     });
 
