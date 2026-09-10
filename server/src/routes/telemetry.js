@@ -122,6 +122,14 @@ router.post('/api/update-location', requireApiKey(), async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'invalid bus id' });
     }
 
+    if (parsedBusNumber === 5) {
+      console.log(`\n👻 [GHOST HUNTER] Bus 5 ping intercepted!`);
+      console.log(`   - IP: ${req.ip}`);
+      console.log(`   - Headers:`, req.headers['user-agent'] || req.headers);
+      console.log(`   - Body:`, req.body);
+      console.log(`-------------------------------------------\n`);
+    }
+
     const busCheck = await query('SELECT bus_number, assigned_hostel FROM buses WHERE bus_number = $1', [parsedBusNumber]);
     if (busCheck.length === 0) {
       return res.status(404).json({ status: 'error', message: 'Bus not registered in system' });
