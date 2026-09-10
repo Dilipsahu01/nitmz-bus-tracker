@@ -11,6 +11,8 @@ import json
 import random
 import time
 import threading
+import os
+import math
 from datetime import datetime, timezone
 from urllib import error, request
 
@@ -25,6 +27,16 @@ HOSTELS = {
     'GH1': (23.775578, 92.731044),
     'GH2': (23.784357, 92.728380)
 }
+
+# Load High-Quality Routes if available
+ROUTES = {}
+routes_path = os.path.join(os.path.dirname(__file__), '../data/routes.json')
+if os.path.exists(routes_path):
+    try:
+        with open(routes_path, 'r') as f:
+            ROUTES = json.load(f)
+    except Exception as e:
+        print(f"Failed to load routes.json: {e}")
 
 # Bus Number -> Assigned Hostel
 BUSES = {
@@ -58,6 +70,24 @@ def send_packet(url, api_key, payload, timeout=6.0):
     except Exception as exc:
         return 0, str(exc)
 
+def get_point_along_route(route_coords, t):
+    """Interpolate precisely along a polyline of coordinates."""
+    if not route_coords: return (0, 0)
+    if t <= 0: return route_coords[0]
+    if t >= 1.0: return route_coords[-1]
+    
+    total_segments = len(route_coords) - 1
+    exact_idx = t * total_segments
+    base_idx = int(exact_idx)
+    remainder = exact_idx - base_idx
+    
+    if base_idx >= total_segments:
+        return route_coords[-1]
+        
+    p1 = route_coords[base_idx]
+    p2 = route_coords[base_idx + 1]
+    return lerp(p1, p2, remainder)
+
 class BusSimulator:
     def __init__(self, bus_number, hostel, is_running):
         self.bus_number = bus_number
@@ -66,11 +96,16 @@ class BusSimulator:
         
         self.hostel_coords = HOSTELS[self.hostel]
         self.mbse_coords = MBSE_COORDS
+        self.route = ROUTES.get(self.hostel, [])
         
         # Current state
         self.sub_t = random.uniform(0.0, 1.0) if self.is_running else 0.0
         self.direction = random.choice([1, -1]) if self.is_running else 0
-        self.lat, self.lng = lerp(self.hostel_coords, self.mbse_coords, self.sub_t)
+        
+        if self.route:
+            self.lat, self.lng = get_point_along_route(self.route, self.sub_t)
+        else:
+            self.lat, self.lng = lerp(self.hostel_coords, self.mbse_coords, self.sub_t)
         
     def tick(self):
         if self.is_running:
@@ -89,7 +124,10 @@ class BusSimulator:
                 self.sub_t = 0.0
                 self.direction = 1
                 
-            self.lat, self.lng = lerp(self.hostel_coords, self.mbse_coords, self.sub_t)
+            if self.route:
+                self.lat, self.lng = get_point_along_route(self.route, self.sub_t)
+            else:
+                self.lat, self.lng = lerp(self.hostel_coords, self.mbse_coords, self.sub_t)
             
             # Add small noise to simulate GPS drift
             noise_lat = random.uniform(-0.00005, 0.00005)
