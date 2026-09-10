@@ -364,7 +364,7 @@ class ESP32Node:
                     noise_lat = random.uniform(-0.001, 0.001)
                     noise_lng = random.uniform(-0.001, 0.001)
 
-                payload = self.build_payload("active", noise_lat, noise_lng)
+                payload = self.build_payload("running", noise_lat, noise_lng)
                 
                 success = await self.send_payload(payload)
                 if success:
