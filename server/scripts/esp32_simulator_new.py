@@ -295,7 +295,7 @@ class ESP32Node:
             elif self.state == "LAYOVER":
                 self.current_speed = 0.0
                 at_mbse = self.sub_t >= 1.0
-                self.lat, self.lng = MBSE_COORDS if at_mbse else self.hostel_coords
+                self.lat, self.lng = self.mbse_coords if at_mbse else self.hostel_coords
                 
                 if current_time >= self.layover_end_time:
                     self.state = "ACTIVE"
