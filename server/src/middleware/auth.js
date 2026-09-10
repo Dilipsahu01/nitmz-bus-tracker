@@ -53,9 +53,7 @@ function requireApiKey() {
   return (req, res, next) => {
     const apiKey = req.headers['x-api-key'];
     const validKeys = [
-      process.env.API_SECRET_KEY,
-      'NITMZ_ESP32_SECURE_API_KEY_2026',
-      'BUSTRACKESP1SECRETKEY'
+      process.env.API_SECRET_KEY
     ].filter(Boolean);
     
     if (!apiKey || !validKeys.includes(apiKey)) {
