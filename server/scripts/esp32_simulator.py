@@ -222,10 +222,16 @@ class ESP32Node:
 
     def calculate_gps(self):
         """Simulate NEO-6M module physics."""
-        if self.state in ["OFF", "SLEEP"]:
+        if self.state in ["OFF"]:
             self.has_fix = False
             self.satellites = 0
             self.hdop = 99.9
+            return
+            
+        if self.state == "SLEEP":
+            self.has_fix = True
+            self.satellites = 4
+            self.hdop = 5.0
             return
 
         if self.state == "ACQUIRING":
@@ -236,14 +242,7 @@ class ESP32Node:
 
         # Active Fix
         self.has_fix = True
-        
-        # Tree cover / tunnels drop satellites
-        in_tunnel = 0.48 < self.sub_t < 0.52
-        if in_tunnel:
-            self.satellites = random.randint(2, 4)
-            self.has_fix = False
-        else:
-            self.satellites = random.randint(7, 12)
+        self.satellites = random.randint(7, 12)
             
         # Correlate HDOP directly to Satellites
         if self.satellites < 4:
@@ -256,6 +255,12 @@ class ESP32Node:
     async def run(self):
         print(f"{DIM}[Bus {self.bus_number}] SIM800L Module Initialized. Interval: {self.report_interval}s{RESET}")
         
+        # Send an immediate heartbeat on startup so UI instantly snaps sleeping buses to correct locations
+        if self.state == "SLEEP":
+            self.calculate_gps()
+            await self.send_payload(self.build_payload("idle"))
+            print(f"{DIM}[Bus {self.bus_number}] 💤 Initial Heartbeat (Parked at {self.hostel}){RESET}")
+            
         while True:
             current_time = time.time()
             
@@ -312,8 +317,8 @@ class ESP32Node:
                 if current_time < self.traffic_pause_until:
                     self.target_speed = 0.0
                 else:
-                    # Occasional traffic stop or student pickup (5% chance)
-                    if random.random() < 0.05:
+                    # Occasional traffic stop or student pickup (very rare to prevent getting stuck)
+                    if random.random() < 0.005:
                         pause_time = random.randint(10, 30)
                         self.traffic_pause_until = current_time + pause_time
                         self.target_speed = 0.0
@@ -382,6 +387,9 @@ class ESP32Node:
                         await asyncio.sleep(20.0)
                     else:
                         await asyncio.sleep(self.report_interval)
+                else:
+                    # If we failed to send (and didn't sleep in the backoff), sleep for standard interval
+                    await asyncio.sleep(self.report_interval)
 
 
     def build_payload(self, status_text, noise_lat=0, noise_lng=0):
