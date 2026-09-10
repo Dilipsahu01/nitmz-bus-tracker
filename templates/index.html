@@ -566,14 +566,14 @@ const MAP_BOUNDS = L.latLngBounds(
 const busLastSeen = new Map();
 
 const HOSTELS = [
-  { id: 'bh1', name: 'Boys Hostel 1',  coords: [23.792917, 92.727789], type: 'boys' },
-  { id: 'bh2', name: 'Boys Hostel 2',  coords: [23.794311, 92.728146], type: 'boys' },
-  { id: 'bh3', name: 'Boys Hostel 3',  coords: [23.767378, 92.737712], type: 'boys' },
-  { id: 'bh4', name: 'Boys Hostel 4',  coords: [23.769835, 92.737959], type: 'boys' },
-  { id: 'gh1', name: 'Girls Hostel 1', coords: [23.775578, 92.731044], type: 'girls' },
-  { id: 'gh2', name: 'Girls Hostel 2', coords: [23.784357, 92.728380], type: 'girls' },
-  { id: 'mbse', name: 'MBSE', coords: [23.749966, 92.722865], type: 'academic' },
-  { id: 'block8', name: 'Block 8', coords: [23.751949, 92.727348], type: 'academic' }
+  { id: 'BH1', name: 'Boys Hostel 1',  coords: [23.792917, 92.727789], type: 'boys' },
+  { id: 'BH2', name: 'Boys Hostel 2',  coords: [23.794311, 92.728146], type: 'boys' },
+  { id: 'BH3', name: 'Boys Hostel 3',  coords: [23.767378, 92.737712], type: 'boys' },
+  { id: 'BH4', name: 'Boys Hostel 4',  coords: [23.769835, 92.737959], type: 'boys' },
+  { id: 'GH1', name: 'Girls Hostel 1', coords: [23.775578, 92.731044], type: 'girls' },
+  { id: 'GH2', name: 'Girls Hostel 2', coords: [23.784357, 92.728380], type: 'girls' },
+  { id: 'MBSE', name: 'MBSE', coords: [23.749966, 92.722865], type: 'academic' },
+  { id: 'BLOCK8', name: 'Block 8', coords: [23.751949, 92.727348], type: 'academic' }
 ];
 
 /* ================================================================
@@ -709,7 +709,7 @@ function initMap() {
     maxZoom: 18
   }).setView(DEFAULT_CENTER, 15);
 
-  currentTileLayer = TILE_LAYERS.dark();
+  currentTileLayer = TILE_LAYERS.street();
   currentTileLayer.addTo(map);
 
   HOSTELS.forEach(h => {
@@ -770,7 +770,18 @@ function setPulse(busId, moving) {
    SMOOTH ANIMATION ENGINE
 ================================================================ */
 function animateBusTo(busId, lat, lng) {
+  const isSelected = (busId === S.selectedBusId);
+  const shouldShow = (!S.tracking || isSelected);
+  
   const marker = busMarkers.get(busId);
+  if (!shouldShow) {
+    if (marker) {
+      map.removeLayer(marker);
+      busMarkers.delete(busId);
+    }
+    return;
+  }
+
   if (!marker) {
     const icon = buildBusIcon(0, busId);
     const newMarker = L.marker([lat, lng], { icon }).addTo(map);
@@ -973,7 +984,7 @@ function drawRoutePolyline(hostelId) {
   const rd = S.routeData[hostelId];
   if (!rd) return;
   routePolyline = L.polyline(rd.coords, {
-    color: '#ffffff', weight: 4, opacity: .7,
+    color: '#3b82f6', weight: 4, opacity: .7,
     lineCap: 'round', lineJoin: 'round',
     className: 'route-line'
   }).addTo(map);
@@ -1213,7 +1224,8 @@ function stopStaleTimer() {
 /* ================================================================
    DATA HANDLER
 ================================================================ */
-function onBusData(busId, data, status) {
+function onBusData(busIdRaw, data, status) {
+  const busId = parseInt(busIdRaw, 10);
   const isSelected = (busId === S.selectedBusId);
 
   // Track last-seen for offline detection (all buses)
@@ -1277,11 +1289,17 @@ function onBusData(busId, data, status) {
       document.getElementById('dSat').textContent = data.satellites ?? '--';
 
       // Full diagnostic fields
-      document.getElementById('dLat').textContent  = (hasFix && lat) ? lat.toFixed(6) : '--';
-      document.getElementById('dLng').textContent  = (hasFix && lng) ? lng.toFixed(6) : '--';
-      document.getElementById('dHdop').textContent = hdop != null ? hdop.toFixed(1) : '--';
-      document.getElementById('dFix').textContent  = hasFix ? 'Yes' : 'No';
-      document.getElementById('rawJson').textContent = JSON.stringify(data, null, 2);
+      const dLat = document.getElementById('dLat');
+      const dLng = document.getElementById('dLng');
+      const dHdop = document.getElementById('dHdop');
+      const dFix = document.getElementById('dFix');
+      const rawJson = document.getElementById('rawJson');
+      
+      if (dLat) dLat.textContent  = (hasFix && lat) ? lat.toFixed(6) : '--';
+      if (dLng) dLng.textContent  = (hasFix && lng) ? lng.toFixed(6) : '--';
+      if (dHdop) dHdop.textContent = hdop != null ? hdop.toFixed(1) : '--';
+      if (dFix) dFix.textContent  = hasFix ? 'Yes' : 'No';
+      if (rawJson) rawJson.textContent = JSON.stringify(data, null, 2);
     }
 
     pushSpeed(speed);
@@ -1309,19 +1327,21 @@ function updateStatusBig(hasFix, moving) {
 /* ================================================================
    TRACKING START / STOP
 ================================================================ */
-document.getElementById('trackBtn').addEventListener('click', () => {
-  if (S.tracking) {
-    stopTracking();
-  } else {
-    startTracking();
-  }
-});
 
 function startTracking() {
   if (S.tracking) return;
   if (!S.selectedBusId) return;
   S.tracking = true;
+
+  // Instantly hide other buses
+  busMarkers.forEach((marker, busId) => {
+    if (busId !== S.selectedBusId) {
+      map.removeLayer(marker);
+      busMarkers.delete(busId);
+    }
+  });
   
+
   const card = document.getElementById(`busCard-${S.selectedBusId}`);
   if (card) card.classList.add('active');
   
@@ -1366,8 +1386,10 @@ function stopTracking() {
   setConn('waiting');
   const sl = document.getElementById('staleLabel');
   if (sl) sl.style.display = 'none';
-  document.getElementById('stalePill').style.display = 'none';
-  document.getElementById('staleWarning').style.display = 'none';
+  const sp = document.getElementById('stalePill');
+  if (sp) sp.style.display = 'none';
+  const sw = document.getElementById('staleWarning');
+  if (sw) sw.style.display = 'none';
   updateETAList();
 }
 
@@ -1731,6 +1753,7 @@ document.addEventListener('visibilitychange', () => {
   };
 
   apiFetch('/buses').then(buses => {
+    buses.sort((a, b) => a.busNumber - b.busNumber);
     if (buses.length > 0 && !S.selectedBusId) {
       S.selectedBusId = buses[0].busNumber;
       document.getElementById('statusText').innerHTML = `Bus ${S.selectedBusId} <span style="font-size:10px;color:var(--muted)">(${buses[0].status})</span>`;

@@ -99,4 +99,21 @@ router.get('/api/me', requireAuth(), async (req, res) => {
   }
 });
 
+router.get('/api/hostels', async (req, res) => {
+  try {
+    const rows = await query('SELECT * FROM hostels ORDER BY name');
+    res.json({
+      status: 'success',
+      data: rows.map(h => ({
+        id: h.id,
+        name: h.name,
+        type: h.type,
+        fullName: h.full_name
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
 module.exports = router;

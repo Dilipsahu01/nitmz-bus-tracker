@@ -112,6 +112,7 @@ router.get('/api/buses', requireAuth(['student', 'caretaker', 'admin']), async (
       sql += ' WHERE LOWER(b.assigned_hostel) = LOWER($1)';
       params.push(reqHostel);
     }
+    sql += ' ORDER BY b.bus_number ASC';
 
     const rows = await query(sql, params);
     res.json(rows.map(mapBus));
@@ -139,6 +140,7 @@ router.get('/api/all-buses', requireAuth(['student', 'caretaker', 'admin']), asy
       sql += ' WHERE LOWER(b.assigned_hostel) = LOWER($1)';
       params.push(reqHostel);
     }
+    sql += ' ORDER BY b.bus_number ASC';
 
     const rows = await query(sql, params);
     res.json({ status: 'success', data: rows.map(mapBus) });
@@ -163,6 +165,7 @@ router.get('/api/buses/live', requireAuth(), async (req, res) => {
         LIMIT 1
       ) t ON true
       WHERE b.is_enabled = true
+      ORDER BY b.bus_number ASC
     `;
     let params = [];
     const userHostel = req.auth.hostelId || req.auth.hostel_id;

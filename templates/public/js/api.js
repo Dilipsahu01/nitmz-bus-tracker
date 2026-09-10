@@ -27,13 +27,13 @@ async function apiFetch(endpoint, method = 'GET', body = null) {
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       // Force logout if token is invalid or expired
       try {
         localStorage.removeItem('jwt_token');
         localStorage.removeItem('user_info');
       } catch (e) {}
-      if (window.location.pathname !== '/login') {
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/login.html') {
         window.location.replace('/login');
       }
     }

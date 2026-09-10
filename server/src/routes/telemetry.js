@@ -110,6 +110,11 @@ router.post('/api/update-location', requireApiKey(), async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'invalid bus id' });
     }
 
+    const busCheck = await query('SELECT bus_number, assigned_hostel FROM buses WHERE bus_number = $1', [parsedBusNumber]);
+    if (busCheck.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Bus not registered in system' });
+    }
+
     // Prepare hot cache entry
     const cacheEntry = {
       ...d,
@@ -192,6 +197,11 @@ router.post('/endpoint', requireApiKey(), async (req, res) => {
     }
 
     const busNum = Number(String(d.bus_id || '5').replace(/[^0-9]/g, '')) || 5;
+
+    const busCheck = await query('SELECT bus_number FROM buses WHERE bus_number = $1', [busNum]);
+    if (busCheck.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Bus not registered in system' });
+    }
     
     const cacheEntry = {
       ...d,
@@ -268,6 +278,9 @@ router.get('/api/buses/stream', requireAuth(), async (req, res) => {
       } catch (dbErr) {
         console.error('[SSE stream] Fallback DB query error:', dbErr.message);
       }
+    } else {
+      // Validate Redis cache against known buses to ignore ghost/deleted hardware IDs
+      initialData = initialData.filter(d => busHostelMapping[d.bus_number]);
     }
 
     // Filter initial data for RBAC
