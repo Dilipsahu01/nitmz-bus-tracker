@@ -174,7 +174,7 @@ router.post('/api/update-location', requireApiKey(), async (req, res) => {
     // Geofence checking
     try {
       const distFromCampus = haversine(d.lat, d.lng, 23.7271, 92.7176);
-      if (distFromCampus > 4000) { // 4km boundary
+      if (distFromCampus > 10000) { // 10km boundary to include BH1/BH2 which are ~7.5km away
         const recent = await query(
           `SELECT id FROM notifications WHERE type = 'warning' AND bus_number = $1 AND sent_at > NOW() - INTERVAL '15 minutes'`, 
           [parsedBusNumber]
