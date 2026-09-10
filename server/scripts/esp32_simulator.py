@@ -140,6 +140,12 @@ class ESP32Node:
 
     async def run(self):
         """Main async loop for this specific ESP32 node."""
+        # Send an immediate heartbeat on startup so UI instantly snaps sleeping buses to correct locations
+        if self.state == "SLEEP":
+            await self.send_payload(self.build_payload(0.0, "idle"))
+            print(f"{DIM}[Bus {self.bus_number}] 💤 Initial Heartbeat (Parked at {self.hostel}){RESET}")
+            await asyncio.sleep(300)
+            
         while True:
             current_time = time.time()
             speed_kmh = 0.0
@@ -150,8 +156,12 @@ class ESP32Node:
                 self.lat, self.lng = self.hostel_coords
                 noise_lat = random.uniform(-0.00001, 0.00001)
                 noise_lng = random.uniform(-0.00001, 0.00001)
-                await asyncio.sleep(300) # Deep sleep for 5 minutes
+                
+                payload = self.build_payload(speed_kmh, status_text, noise_lat, noise_lng)
+                await self.send_payload(payload)
                 print(f"{DIM}[Bus {self.bus_number}] 💤 Heartbeat (Parked at {self.hostel}){RESET}")
+                await asyncio.sleep(300) # Deep sleep for 5 minutes
+                continue
             
             # STATE: LAYOVER
             elif self.state == "LAYOVER":
@@ -163,8 +173,10 @@ class ESP32Node:
                     self.state = "ACTIVE"
                     print(f"{GREEN}[Bus {self.bus_number}] 🚌 Layover ended. Resuming route!{RESET}")
                 else:
-                    await asyncio.sleep(5)
-                    continue # Wait out the layover without sending high-freq packets
+                    payload = self.build_payload(0.0, "idle", noise_lat, noise_lng)
+                    await self.send_payload(payload)
+                    await asyncio.sleep(30) # Send heartbeat every 30s during layover
+                    continue
 
             # STATE: ACTIVE
             elif self.state == "ACTIVE":
@@ -190,31 +202,15 @@ class ESP32Node:
                 
                 noise_lat = random.uniform(-0.00005, 0.00005)
                 noise_lng = random.uniform(-0.00005, 0.00005)
-                status_text = "active"
+                status_text = "idle" if self.state == "LAYOVER" else "active"
+                if self.state == "LAYOVER": speed_kmh = 0.0
                 
                 # Drain battery slowly while active
-                if random.random() < 0.1:
+                if self.state == "ACTIVE" and random.random() < 0.1:
                     self.battery_pct = max(0, self.battery_pct - 1)
 
-            # Build Payload (Matches telemetry.js schema exactly, while fulfilling prompt's extra requirements)
-            payload = {
-                "device_id": f"ESP32-BUS-{self.bus_number}",
-                "bus_id": str(self.bus_number),
-                "has_fix": True,
-                "latitude": round(self.lat + noise_lat, 6),
-                "longitude": round(self.lng + noise_lng, 6),
-                "speed_kmh": round(speed_kmh, 1),
-                "satellites": random.randint(8, 12),
-                "hdop": round(random.uniform(0.7, 1.2), 1),
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "status": status_text,
-                "net_type": random.choice(["GSM", "WiFi"]),
-                
-                # Extra requested fields 
-                "state": self.state,
-                "battery_pct": self.battery_pct,
-                "buffered_packets": len(self.buffer)
-            }
+            # Build Payload
+            payload = self.build_payload(speed_kmh, status_text, noise_lat, noise_lng)
 
             # Attempt transmission
             success = await self.send_payload(payload)
@@ -224,6 +220,24 @@ class ESP32Node:
             # Active buses update every 3-5 seconds
             if self.state == "ACTIVE":
                 await asyncio.sleep(random.uniform(3.0, 5.0))
+
+    def build_payload(self, speed_kmh, status_text, noise_lat=0, noise_lng=0):
+        return {
+            "device_id": f"ESP32-BUS-{self.bus_number}",
+            "bus_id": str(self.bus_number),
+            "has_fix": True,
+            "latitude": round(self.lat + noise_lat, 6),
+            "longitude": round(self.lng + noise_lng, 6),
+            "speed_kmh": round(speed_kmh, 1),
+            "satellites": random.randint(8, 12),
+            "hdop": round(random.uniform(0.7, 1.2), 1),
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "status": status_text,
+            "net_type": random.choice(["GSM", "WiFi"]),
+            "state": self.state,
+            "battery_pct": self.battery_pct,
+            "buffered_packets": len(self.buffer)
+        }
 
 async def main_loop():
     parser = argparse.ArgumentParser()

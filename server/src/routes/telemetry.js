@@ -73,6 +73,18 @@ async function updateBusHostelMapping() {
 updateBusHostelMapping();
 setInterval(updateBusHostelMapping, 60000); // Refresh every minute
 
+const lastTelemetryInsert = {};
+
+// --- 28-Day Auto Cleanup ---
+setInterval(async () => {
+  try {
+    await query(`DELETE FROM telemetry WHERE ts < NOW() - INTERVAL '28 days'`);
+    console.log('[telemetry] 🧹 Auto-flushed telemetry data older than 28 days');
+  } catch (err) {
+    console.error('[telemetry] Cleanup error:', err.message);
+  }
+}, 24 * 60 * 60 * 1000); // Run once every 24 hours
+
 (async () => {
   try {
     setTimeout(async () => {
@@ -525,19 +537,26 @@ setInterval(async () => {
     const busNumbers = [], updateLats = [], updateLngs = [], updateSpeeds = [], updateStatuses = [];
 
     for (const d of parsedItems) {
-      deviceIds.push(d.device_id);
-      busIds.push(String(d.bus_id || d.bus_number));
-      lats.push(d.lat);
-      lngs.push(d.lng);
-      speeds.push(d.speed || 0);
-      accuracies.push(d.accuracy || 1.0);
-      hasFixes.push(d.has_fix || false);
-      satellites.push(d.satellites || 0);
-      hdops.push(d.hdop || 99.9);
-      netTypes.push(d.net_type || 'unknown');
-      tss.push(d.ts || new Date().toISOString());
-      statuses.push(d.status || 'idle');
+      const now = Date.now();
+      // Throttle historical telemetry storage to 1 point every 3 minutes (180,000ms)
+      if (!lastTelemetryInsert[d.bus_number] || (now - lastTelemetryInsert[d.bus_number] >= 180000)) {
+        deviceIds.push(d.device_id);
+        busIds.push(String(d.bus_id || d.bus_number));
+        lats.push(d.lat);
+        lngs.push(d.lng);
+        speeds.push(d.speed || 0);
+        accuracies.push(d.accuracy || 1.0);
+        hasFixes.push(d.has_fix || false);
+        satellites.push(d.satellites || 0);
+        hdops.push(d.hdop || 99.9);
+        netTypes.push(d.net_type || 'unknown');
+        tss.push(d.ts || new Date().toISOString());
+        statuses.push(d.status || 'idle');
+        
+        lastTelemetryInsert[d.bus_number] = now;
+      }
 
+      // Always update the current location in the buses table
       busNumbers.push(d.bus_number);
       updateLats.push(d.lat);
       updateLngs.push(d.lng);
@@ -545,12 +564,14 @@ setInterval(async () => {
       updateStatuses.push(d.status === 'active' ? 'running' : (d.status || 'idle'));
     }
 
-    // 1. Bulk Insert historical telemetry
-    await query(
-      `INSERT INTO telemetry (device_id, bus_id, lat, lng, speed, accuracy, has_fix, satellites, hdop, net_type, ts, status)
-       SELECT * FROM UNNEST($1::text[], $2::text[], $3::numeric[], $4::numeric[], $5::numeric[], $6::numeric[], $7::boolean[], $8::int[], $9::numeric[], $10::text[], $11::timestamp[], $12::text[])`,
-      [deviceIds, busIds, lats, lngs, speeds, accuracies, hasFixes, satellites, hdops, netTypes, tss, statuses]
-    );
+    // 1. Bulk Insert historical telemetry (Throttled)
+    if (deviceIds.length > 0) {
+      await query(
+        `INSERT INTO telemetry (device_id, bus_id, lat, lng, speed, accuracy, has_fix, satellites, hdop, net_type, ts, status)
+         SELECT * FROM UNNEST($1::text[], $2::text[], $3::numeric[], $4::numeric[], $5::numeric[], $6::numeric[], $7::boolean[], $8::int[], $9::numeric[], $10::text[], $11::timestamp[], $12::text[])`,
+        [deviceIds, busIds, lats, lngs, speeds, accuracies, hasFixes, satellites, hdops, netTypes, tss, statuses]
+      );
+    }
 
     // 2. Bulk Update canonical buses table
     await query(
