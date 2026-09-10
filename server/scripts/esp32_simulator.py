@@ -239,6 +239,20 @@ class ESP32Node:
             "buffered_packets": len(self.buffer)
         }
 
+async def dummy_health_server(port):
+    """Dummy HTTP server to satisfy Render's Web Service health checks."""
+    async def handle_client(reader, writer):
+        request = (await reader.read(1024)).decode('utf8')
+        response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSimulator Active"
+        writer.write(response.encode('utf8'))
+        await writer.drain()
+        writer.close()
+    
+    server = await asyncio.start_server(handle_client, '0.0.0.0', port)
+    print(f"{CYAN}🩺 Dummy Health Server listening on port {port}{RESET}")
+    async with server:
+        await server.serve_forever()
+
 async def main_loop():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -249,7 +263,15 @@ async def main_loop():
     args = parser.parse_args()
 
     protocol = "https" if args.https else "http"
-    url = f"{protocol}://{args.host}:{args.port}/api/update-location"
+    
+    # If running on Render, target the live site by default unless explicitly aimed at localhost
+    render_env_port = os.environ.get("PORT")
+    if render_env_port and args.host == "127.0.0.1":
+        # We are running inside a Render Web Service container, but the host wasn't overridden. 
+        # By default, point to the live server instead of localhost (which would fail)
+        url = "https://nitmz-bus-tracker.onrender.com/api/update-location"
+    else:
+        url = f"{protocol}://{args.host}:{args.port}/api/update-location"
     
     print(f"{MAGENTA}=========================================={RESET}")
     print(f"{MAGENTA} 🛰️  NITMZ Fleet Architecture Simulator{RESET}")
@@ -267,8 +289,12 @@ async def main_loop():
         is_active = bus_num in active_bus_ids
         nodes.append(ESP32Node(bus_num, hostel, is_active, url, args.api_key))
 
-    # Run all node async loops concurrently
     tasks = [asyncio.create_task(node.run()) for node in nodes]
+    
+    # Start the dummy health server if PORT is defined (meaning we are on Render)
+    if render_env_port:
+        tasks.append(asyncio.create_task(dummy_health_server(int(render_env_port))))
+        
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
