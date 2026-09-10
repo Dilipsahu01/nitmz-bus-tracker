@@ -93,9 +93,17 @@ class ESP32Node:
         self.hostel_coords = HOSTELS[self.hostel]
         self.mbse_coords = MBSE_COORDS
         
+        if is_active:
+            self.sub_t = random.uniform(0.1, 0.9) # Start somewhere on the road
+            self.direction = random.choice([-1, 1])
+        else:
+            self.sub_t = 0.0
+            self.direction = 1
+            
+        self.battery_pct = random.randint(70, 100)
+        self.global_nodes = None # Assigned later
+        
         # Physics & Hardware Simulation
-        self.sub_t = random.uniform(0.0, 1.0) if self.state == "ACTIVE" else 0.0
-        self.direction = random.choice([1, -1]) if self.state == "ACTIVE" else 1
         self.lat, self.lng = self.hostel_coords
         self.battery_pct = random.randint(70, 100)
         
@@ -186,13 +194,28 @@ class ESP32Node:
                 
                 # Check for Arrival / Layover Transition
                 if self.sub_t >= 1.0 or self.sub_t <= 0.0:
-                    self.sub_t = 1.0 if self.sub_t >= 1.0 else 0.0
+                    at_mbse = self.sub_t >= 1.0
+                    self.sub_t = 1.0 if at_mbse else 0.0
                     self.direction *= -1
                     self.state = "LAYOVER"
+                    
+                    loc_name = "MBSE" if at_mbse else self.hostel
+                    
+                    # 50% chance to swap shifts with a sleeping bus when returning to hostel
+                    if not at_mbse and self.global_nodes and random.random() < 0.5:
+                        sleeping_nodes = [n for n in self.global_nodes if n.state == "SLEEP"]
+                        if sleeping_nodes:
+                            swap_node = random.choice(sleeping_nodes)
+                            swap_node.state = "ACTIVE"
+                            swap_node.sub_t = 0.0
+                            swap_node.direction = 1
+                            self.state = "SLEEP"
+                            print(f"{MAGENTA}🔄 FLEET SWAP! Bus {self.bus_number} parked. Woke up Bus {swap_node.bus_number}!{RESET}")
+                            continue # Immediately sleep
+                    
                     # Wait 2-3 minutes
                     layover_seconds = random.randint(120, 180)
                     self.layover_end_time = current_time + layover_seconds
-                    loc_name = "MBSE" if self.sub_t == 1.0 else self.hostel
                     print(f"{YELLOW}[Bus {self.bus_number}] 🛑 Arrived at {loc_name}. Layover for {layover_seconds}s.{RESET}")
                 
                 if self.route:
@@ -217,9 +240,9 @@ class ESP32Node:
             if success and self.state == "ACTIVE":
                 print(f"{GREEN}[Bus {self.bus_number}] 📡 LIVE | {payload['latitude']:.5f}, {payload['longitude']:.5f} | {payload['speed_kmh']}km/h | {self.battery_pct}%{RESET}")
             
-            # Active buses update every 3-5 seconds
+            # Active buses update every 1 second for hyper-realism
             if self.state == "ACTIVE":
-                await asyncio.sleep(random.uniform(3.0, 5.0))
+                await asyncio.sleep(1.0)
 
     def build_payload(self, speed_kmh, status_text, noise_lat=0, noise_lng=0):
         return {
@@ -279,15 +302,17 @@ async def main_loop():
     print(f" Endpoint: {url}")
     print(f" Total Nodes: {len(BUSES)} | Active: {args.active_count}")
     
-    # Explicitly exclude Bus 5 from being active so it always remains parked/idle
-    available_for_active = [b for b in BUSES.keys() if b != 5]
-    active_bus_ids = random.sample(available_for_active, min(args.active_count, len(available_for_active)))
+    active_bus_ids = random.sample(list(BUSES.keys()), min(args.active_count, len(BUSES)))
     print(f" Active IDs: {', '.join(map(str, active_bus_ids))}\n")
 
     nodes = []
     for bus_num, hostel in BUSES.items():
         is_active = bus_num in active_bus_ids
         nodes.append(ESP32Node(bus_num, hostel, is_active, url, args.api_key))
+
+    # Give every node a reference to the global list so they can swap shifts
+    for node in nodes:
+        node.global_nodes = nodes
 
     tasks = [asyncio.create_task(node.run()) for node in nodes]
     
