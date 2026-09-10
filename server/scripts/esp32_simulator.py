@@ -257,7 +257,9 @@ async def main_loop():
     print(f" Endpoint: {url}")
     print(f" Total Nodes: {len(BUSES)} | Active: {args.active_count}")
     
-    active_bus_ids = random.sample(list(BUSES.keys()), min(args.active_count, len(BUSES)))
+    # Explicitly exclude Bus 5 from being active so it always remains parked/idle
+    available_for_active = [b for b in BUSES.keys() if b != 5]
+    active_bus_ids = random.sample(available_for_active, min(args.active_count, len(available_for_active)))
     print(f" Active IDs: {', '.join(map(str, active_bus_ids))}\n")
 
     nodes = []
